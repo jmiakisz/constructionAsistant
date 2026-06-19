@@ -38,6 +38,7 @@ public class ChatService {
     private static final int HISTORY_LIMIT = 10;
     private static final int RAG_CHUNKS = 5;
     private static final int RAG_KNOWLEDGE = 5;
+    private static final double RAG_MAX_DISTANCE = 0.45;
     private static final int COMPACT_THRESHOLD = 50;
     private static final int COMPACT_KEEP = 10;
 
@@ -130,8 +131,9 @@ public class ChatService {
         sb.append("Odpowiadasz po polsku, konkretnie i na temat projektu.\n\n");
         sb.append("WAŻNE: Odpowiedź zwróć WYŁĄCZNIE jako JSON bez markdown:\n");
         sb.append("{\"response\": \"twoja odpowiedź\", \"valuable\": true/false, \"escalate\": false, \"category\": null, \"style_observation\": null}\n");
-        sb.append("valuable=true gdy odpowiedź zawiera konkretną wiedzę: ceny, kwoty, daty, nazwy firm/podwykonawców, decyzje, ustalenia, problemy techniczne, dane z dokumentów, ryzyka, terminy.\n");
-        sb.append("valuable=false gdy: powitanie/pożegnanie/podziękowanie, prośba o doprecyzowanie, ogólna rozmowa o projekcie BEZ konkretnych faktów, odpowiedź typu 'rozumiem'/'ok'/'sprawdzę'.\n");
+        sb.append("valuable=true gdy KTÓRAKOLWIEK strona podaje konkretny fakt: cena, kwota, data, termin, nazwa firmy/podwykonawcy/materiału, decyzja, ustalenie, postęp robót (co zostało zrobione/odebrane/dostarczone), problem techniczny, ryzyko, dane z dokumentów, kto co zrobił/powie/sprawdzi.\n");
+        sb.append("valuable=false TYLKO gdy: samo powitanie/pożegnanie/podziękowanie, prośba o doprecyzowanie BEZ podania faktów, odpowiedź 'rozumiem'/'ok' BEZ żadnych konkretnych informacji.\n");
+        sb.append("Wątpliwość → valuable=true. Lepiej zapisać za dużo niż za mało.\n");
         sb.append("escalate=true gdy pytanie wymaga głębokiej analizy prawnej, finansowej lub porównania wielu dokumentów — wtedy NIE odpowiadaj, zwróć TYLKO {\"response\": \"\", \"valuable\": false, \"escalate\": true, \"category\": null, \"style_observation\": null}.\n");
         sb.append("category (gdy valuable=true): TECHNICZNA | FINANSOWA | PODWYKONAWCY | MATERIALY | null.\n");
         sb.append("style_observation: jedno zdanie o stylu komunikacji usera w tej wiadomości (krótko/długo, formalnie/nieformalnie, szczegółowo/ogólnie). null gdy brak wystarczających danych.\n");
@@ -149,18 +151,20 @@ public class ChatService {
             // Warstwa 2 — wiedza firmowa + projektowa dopasowana do pytania
             List<String> visibleRoles = rolesUpTo(userRole);
             List<KnowledgeEntry> knowledge = knowledgeEntryRepository.findSimilarForProject(
-                    project.getId(), queryVecStr, visibleRoles, RAG_KNOWLEDGE);
-            log.info("PROMPT LAYER 2: knowledge entries found={}", knowledge.size());
+                    project.getId(), queryVecStr, visibleRoles, RAG_KNOWLEDGE, RAG_MAX_DISTANCE);
+            log.info("PROMPT LAYER 2: knowledge entries found={} (threshold<={})", knowledge.size(), RAG_MAX_DISTANCE);
             if (!knowledge.isEmpty()) {
+                knowledge.forEach(k -> log.info("  [KNOWLEDGE] [{}] {}", k.getCategory(), k.getContent()));
                 sb.append("=== WIEDZA ===\n");
                 knowledge.forEach(k -> sb.append("- ").append(k.getContent()).append("\n"));
                 sb.append("\n");
             }
 
             // Warstwa 3 — fragmenty dokumentów dopasowane do pytania
-            List<DocumentChunk> chunks = chunkRepository.findSimilar(project.getId(), userRole, queryVecStr, RAG_CHUNKS);
+            List<DocumentChunk> chunks = chunkRepository.findSimilar(project.getId(), userRole, queryVecStr, RAG_CHUNKS, RAG_MAX_DISTANCE);
             log.info("PROMPT LAYER 3: document chunks found={}", chunks.size());
             if (!chunks.isEmpty()) {
+                chunks.forEach(c -> log.info("  [CHUNK] doc={} content={}", c.getDocument() != null ? c.getDocument().getName() : "?", c.getContent().substring(0, Math.min(120, c.getContent().length()))));
                 sb.append("=== FRAGMENTY DOKUMENTÓW ===\n");
                 chunks.forEach(c -> sb.append(c.getContent()).append("\n---\n"));
             }

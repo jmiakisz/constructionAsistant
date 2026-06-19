@@ -11,12 +11,13 @@ import java.util.List;
 
 public interface KnowledgeEntryRepository extends JpaRepository<KnowledgeEntry, Long> {
 
-    // Firmowa (cross-project) + projektowa — oba dopasowane do pytania usera
+    // Firmowa (cross-project) + projektowa — oba dopasowane do pytania usera, tylko powyżej progu trafności
     @Query(value = """
         SELECT ke.* FROM knowledge_entries ke
         WHERE ke.embedding IS NOT NULL
           AND ke.source_role IN :visibleRoles
           AND (ke.project_id IS NULL OR ke.project_id = :projectId)
+          AND (ke.embedding <=> CAST(:queryEmbedding AS vector)) <= :maxDistance
         ORDER BY ke.embedding <=> CAST(:queryEmbedding AS vector)
         LIMIT :topK
         """, nativeQuery = true)
@@ -24,7 +25,8 @@ public interface KnowledgeEntryRepository extends JpaRepository<KnowledgeEntry, 
         @Param("projectId") Long projectId,
         @Param("queryEmbedding") String queryEmbedding,
         @Param("visibleRoles") List<String> visibleRoles,
-        @Param("topK") int topK
+        @Param("topK") int topK,
+        @Param("maxDistance") double maxDistance
     );
 
     @Query(value = """

@@ -80,7 +80,7 @@ public class NightlyAgentService {
     @Transactional
     public void processKnowledgeSync() {
         List<Message> unprocessed = messageRepository.findUnprocessedSince(
-                LocalDateTime.now().minusDays(2));
+                LocalDateTime.now().minusDays(30));
         if (unprocessed.isEmpty()) { log.info("No unprocessed messages"); return; }
 
         Map<Long, List<Message>> byProject = unprocessed.stream()
@@ -490,19 +490,22 @@ public class NightlyAgentService {
                                                     String newInsights, String currentProjectMemory) {
         return """
                 Projekt: %s
-                Sklasyfikuj nowe wnioski jako wiedzę firmową lub projektową.
+                Wyodrębnij i sklasyfikuj wiedzę z rozmów. Weryfikuj każdy fakt z ORYGINALNĄ ROZMOWĄ — nie ufaj ślepo wstępnym wnioskom, mogą być błędne.
 
                 AKTUALNA PAMIĘĆ PROJEKTU:
                 %s
 
-                NOWE WNIOSKI DO KLASYFIKACJI:
+                WSTĘPNE WNIOSKI (do weryfikacji):
+                %s
+
+                ORYGINALNA ROZMOWA (źródło prawdy):
                 %s
 
                 Zwróć JSON:
                 {
                   "knowledge_entries": [
                     {
-                      "content": "max 500 znaków, konkretny fakt",
+                      "content": "max 500 znaków, dokładny fakt przepisany z rozmowy",
                       "category": "TECHNICZNA|FINANSOWA|PODWYKONAWCY|MATERIALY",
                       "type": "PERMANENT|TEMPORAL",
                       "valid_until": "2026-07-01T00:00:00" lub null,
@@ -512,11 +515,13 @@ public class NightlyAgentService {
                 }
 
                 Zasady:
+                - ZAWSZE weryfikuj daty, godziny, kwoty i nazwy z oryginalną rozmową
+                - Rozróżniaj godzinę (np. "13:00", "godzina 13") od dnia miesiąca ("13-ty", "13 czerwca")
                 - type=TEMPORAL gdy wiedza dotyczy konkretnej daty/terminu (ustaw valid_until)
                 - type=PERMANENT dla wzorców, cech, reguł ogólnych
                 - project_specific=true dla ustaleń tej konkretnej budowy, false dla wiedzy ogólnofirmowej
                 - Daty absolutne, nigdy względne ("za 3 dni" → konkretna data)
-                """.formatted(projectName, currentProjectMemory, newInsights);
+                """.formatted(projectName, currentProjectMemory, newInsights, conversations);
     }
 
     // =========================================================

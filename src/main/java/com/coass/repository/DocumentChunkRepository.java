@@ -9,13 +9,14 @@ import java.util.List;
 
 public interface DocumentChunkRepository extends JpaRepository<DocumentChunk, Long> {
 
-    // Similarity search — zwraca top K chunków widocznych dla danej roli
+    // Similarity search — zwraca top K chunków widocznych dla danej roli, tylko powyżej progu trafności
     @Query(value = """
         SELECT dc.* FROM document_chunks dc
         JOIN documents d ON dc.document_id = d.id
         WHERE d.project_id = :projectId
           AND :role = ANY(d.visible_for_roles)
           AND dc.embedding IS NOT NULL
+          AND (dc.embedding <=> CAST(:queryEmbedding AS vector)) <= :maxDistance
         ORDER BY dc.embedding <=> CAST(:queryEmbedding AS vector)
         LIMIT :topK
         """, nativeQuery = true)
@@ -23,7 +24,8 @@ public interface DocumentChunkRepository extends JpaRepository<DocumentChunk, Lo
         @Param("projectId") Long projectId,
         @Param("role") String role,
         @Param("queryEmbedding") String queryEmbedding,
-        @Param("topK") int topK
+        @Param("topK") int topK,
+        @Param("maxDistance") double maxDistance
     );
 
     @jakarta.transaction.Transactional

@@ -85,6 +85,19 @@ public class AdminController {
         return ResponseEntity.accepted().body(Map.of("status", "accepted", "check", "GET /api/admin/knowledge"));
     }
 
+    // Resetuje processedForKnowledge=false dla wszystkich wiadomości (np. po zmianie prompta)
+    @PostMapping("/messages/reprocess")
+    public ResponseEntity<Map<String, Object>> reprocessMessages(
+            @RequestParam(defaultValue = "90") int days) {
+        var messages = messageRepository.findAll().stream()
+                .filter(m -> m.getCreatedAt().isAfter(LocalDateTime.now().minusDays(days)))
+                .toList();
+        messages.forEach(m -> m.setProcessedForKnowledge(false));
+        messageRepository.saveAll(messages);
+        log.info("REPROCESS reset processedForKnowledge for {} messages (last {} days)", messages.size(), days);
+        return ResponseEntity.ok(Map.of("reset", messages.size(), "days", days));
+    }
+
     // =========================================================
     // Podgląd wiedzy
     // =========================================================
