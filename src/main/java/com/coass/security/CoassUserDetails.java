@@ -19,6 +19,10 @@ public class CoassUserDetails implements UserDetails {
         return user.getId();
     }
 
+    public String getCompanyRole() {
+        return user.getCompanyRole();
+    }
+
     public User getUser() {
         return user;
     }

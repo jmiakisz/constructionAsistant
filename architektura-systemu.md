@@ -29,6 +29,13 @@ Platforma dla firm budowlanych łącząca zarządzanie projektami z asystentem A
 ```
 User
 - id, email, password, name, created_at
+- communication_style (text)     ← konsolidowany profil stylu
+- formality_level (FORMAL/NEUTRAL/CASUAL)
+
+UserStyleObservation
+- id, user_id
+- observation (text)             ← surowa obserwacja z jednej odpowiedzi
+- created_at
 
 Project
 - id, name, description, created_at, created_by
@@ -160,9 +167,14 @@ Pytanie
 
 ## Budowanie promptu (przy każdym pytaniu)
 
-Prompt składa się z 5 warstw:
+Prompt składa się z 6 warstw:
 
 ```
+0. User Memory (zawsze)
+   profil stylu komunikacji usera:
+   "użytkownik komunikuje się bezpośrednio, krótko,
+    woli konkrety bez owijania w bawełnę"
+
 1. Dane strukturalne projektu (zawsze)
    budżet, postęp, harmonogram 14 dni,
    aktywne ryzyka, podwykonawcy
@@ -281,6 +293,23 @@ C) Dotyczy obu?
 processed_for_knowledge = true
 ```
 
+**Konsolidacja user memory (co noc):**
+```
+Pobierz UserStyleObservation z ostatnich 7 dni per user
+        ↓
+Haiku: odrzuć jednorazowe głupoty i szum
+("user napisał hej" → bez wartości)
+        ↓
+Sonnet: połącz obserwacje w spójny profil
+→ nadpisuje user.communication_style
+→ aktualizuje user.formality_level
+
+Cel: wyczyścić surowe obserwacje z dnia,
+zostawić tylko trwałe cechy stylu usera.
+``````
+processed_for_knowledge = true
+```
+
 ### Podział odpowiedzialności
 ```
 Claude w chacie   → zna kontekst rozmowy → flaga useful (real-time)
@@ -350,13 +379,13 @@ Upload dokumentu triggeruje **trzy równoległe procesy** oraz **dwa wywołania 
 ### Procesy przy uploadzie (async, równolegle)
 ```
 Upload dokumentu
-        ↓
+↓
 równolegle:
 ├── wątek 1: Tika → chunking → embeddingi → pgvector
 │   (do wyszukiwania i RAG przy pytaniach)
 │
 └── wątek 2: Tika → cały tekst → [Wywołanie Claude #1]
-    (do ekstrakcji strukturalnej i analizy wewnętrznej)
+(do ekstrakcji strukturalnej i analizy wewnętrznej)
 ```
 
 ### Wywołanie Claude #1 — analiza pojedynczego dokumentu
@@ -364,7 +393,7 @@ Cały tekst dokumentu leci do Claude. Typ dokumentu wskazuje użytkownik przy up
 
 ```
 Typy: UMOWA_INWESTOR / UMOWA_PODWYKONAWCA / KOSZTORYS /
-      HARMONOGRAM / PROJEKT_WYKONAWCZY / SWZ / INNE
+HARMONOGRAM / PROJEKT_WYKONAWCZY / SWZ / INNE
 ```
 
 Claude zwraca JSON z trzema sekcjami:

@@ -1,5 +1,6 @@
 package com.coass.repository;
 
+import com.coass.entity.AiIndexingMode;
 import com.coass.entity.Document;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
@@ -16,4 +17,9 @@ public interface DocumentRepository extends JpaRepository<Document, Long> {
 
     @Query("SELECT d FROM Document d WHERE d.project.id = :projectId AND d.status = 'PROCESSING'")
     List<Document> findProcessingByProjectId(@Param("projectId") Long projectId);
+
+    @Query("SELECT d FROM Document d WHERE d.project.id = :projectId AND d.extractedData IS NOT NULL")
+    List<Document> findByProjectIdWithExtractedData(@Param("projectId") Long projectId);
+
+    long countByProjectIdAndAiIndexingModeAndStatus(Long projectId, AiIndexingMode aiIndexingMode, String status);
 }

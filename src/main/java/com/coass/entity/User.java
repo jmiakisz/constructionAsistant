@@ -27,6 +27,9 @@ public class User {
     @Column(nullable = false)
     private String name;
 
+    @Column(nullable = false, length = 20)
+    private String companyRole = "MEMBER";
+
     @Column(nullable = false)
     private LocalDateTime createdAt = LocalDateTime.now();
 

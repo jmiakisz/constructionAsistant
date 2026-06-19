@@ -26,6 +26,19 @@ public interface DocumentChunkRepository extends JpaRepository<DocumentChunk, Lo
         @Param("topK") int topK
     );
 
+    @jakarta.transaction.Transactional
+    @org.springframework.data.jpa.repository.Modifying
+    @Query(value = """
+        INSERT INTO document_chunks (document_id, content, embedding, chunk_index)
+        VALUES (:documentId, :content, CAST(:embedding AS vector), :chunkIndex)
+        """, nativeQuery = true)
+    void insertWithEmbedding(
+        @Param("documentId") Long documentId,
+        @Param("content") String content,
+        @Param("embedding") String embedding,
+        @Param("chunkIndex") int chunkIndex
+    );
+
     List<DocumentChunk> findByDocumentId(Long documentId);
 
     void deleteByDocumentId(Long documentId);

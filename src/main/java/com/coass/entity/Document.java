@@ -34,6 +34,14 @@ public class Document {
     private String[] visibleForRoles = new String[0];
 
     @Column(nullable = false, length = 50)
+    @Enumerated(EnumType.STRING)
+    private DocumentType documentType = DocumentType.INNE;
+
+    @Column(nullable = false, length = 20)
+    @Enumerated(EnumType.STRING)
+    private AiIndexingMode aiIndexingMode = AiIndexingMode.CHUNKS_ONLY;
+
+    @Column(nullable = false, length = 50)
     private String status = DocumentStatus.PROCESSING.name();
 
     @ManyToOne(fetch = FetchType.LAZY)

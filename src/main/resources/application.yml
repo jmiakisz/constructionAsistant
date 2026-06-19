@@ -1,4 +1,6 @@
 spring:
+  config:
+    import: optional:file:./application-local.yml
   datasource:
     url: jdbc:postgresql://localhost:5433/budowy
     username: postgres
@@ -20,6 +22,8 @@ spring:
 anthropic:
   api-key: ${ANTHROPIC_API_KEY}
   model: claude-sonnet-4-6
+  model-chat: claude-haiku-4-5-20251001
+  model-extraction: claude-haiku-4-5-20251001
 
 jwt:
   secret: ${JWT_SECRET:zmien-ten-sekret-w-produkcji-min64znaki-lorem-ipsum-dolor-sit-amet}
@@ -28,7 +32,17 @@ jwt:
 server:
   port: 8080
 
+app:
+  upload-dir: uploads
+  ai:
+    provider: anthropic  # anthropic | openai
+
 logging:
+  file:
+    name: logs/coass.log
+  pattern:
+    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
   level:
     com.coass: DEBUG
     org.flywaydb: INFO
+    org.hibernate.SQL: INFO

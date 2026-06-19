@@ -23,14 +23,27 @@ public class AuthService {
     private final AuthenticationManager authManager;
 
     @Transactional
-    public AuthResponse register(RegisterRequest req) {
+    public AuthResponse register(RegisterRequest req, String callerCompanyRole) {
+        boolean isBootstrap = userRepository.count() == 0;
+
+        if (!isBootstrap) {
+            if (callerCompanyRole == null) {
+                throw new org.springframework.security.access.AccessDeniedException("Authentication required");
+            }
+            if (!callerCompanyRole.equals("OWNER") && !callerCompanyRole.equals("ADMIN")) {
+                throw new org.springframework.security.access.AccessDeniedException("Only OWNER or ADMIN can create accounts");
+            }
+        }
+
         if (userRepository.existsByEmail(req.email())) {
             throw new IllegalArgumentException("Email already in use");
         }
+
         User user = new User();
         user.setEmail(req.email());
         user.setPassword(passwordEncoder.encode(req.password()));
         user.setName(req.name());
+        user.setCompanyRole(isBootstrap ? "OWNER" : "MEMBER");
         userRepository.save(user);
 
         String token = jwtUtil.generate(user.getId(), user.getEmail());

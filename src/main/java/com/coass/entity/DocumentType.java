@@ -1,0 +1,5 @@
+package com.coass.entity;
+
+public enum DocumentType {
+    UMOWA_INWESTOR, UMOWA_PODWYKONAWCA, KOSZTORYS, HARMONOGRAM, PROJEKT_WYKONAWCZY, SWZ, FAKTURA, INNE
+}

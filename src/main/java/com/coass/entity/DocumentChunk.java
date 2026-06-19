@@ -21,8 +21,8 @@ public class DocumentChunk {
     @Column(nullable = false, columnDefinition = "TEXT")
     private String content;
 
-    // Przechowujemy embedding jako string "[0.1, 0.2, ...]" — pgvector akceptuje taki format
-    @Column(columnDefinition = "vector(384)")
+    // wypełniane w Etapie 3 przez natywne SQL — pgvector nie obsługuje standardowego JDBC type mapping
+    @Column(columnDefinition = "vector(384)", insertable = false, updatable = false)
     private String embedding;
 
     private Integer pageNumber;

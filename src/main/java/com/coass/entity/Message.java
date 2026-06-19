@@ -26,7 +26,17 @@ public class Message {
     @Column(nullable = false, columnDefinition = "TEXT")
     private String content;
 
-    private Integer tokensUsed;
+    @Column(nullable = false)
+    private int inputTokens = 0;
+
+    @Column(nullable = false)
+    private int outputTokens = 0;
+
+    @Column(nullable = false, precision = 10, scale = 6)
+    private java.math.BigDecimal costUsd = java.math.BigDecimal.ZERO;
+
+    @Column(length = 50)
+    private String model;
 
     @Column(nullable = false)
     private boolean processedForKnowledge = false;
