@@ -35,6 +35,11 @@ public class KnowledgeEntry {
     @Column(nullable = false)
     private int confidence = 1;
 
+    @Column(nullable = false, length = 20)
+    private String entryType = "PERMANENT"; // PERMANENT | TEMPORAL
+
+    private LocalDateTime validUntil;
+
     @Column(nullable = false)
     private LocalDateTime createdAt = LocalDateTime.now();
 

@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -65,5 +66,23 @@ public class OpenAiService implements AiChatService {
         log.debug("AI RESPONSE:\n{}", text);
 
         return new ChatResponse(text, inputTokens, outputTokens, 0, 0);
+    }
+
+    @Override
+    public String submitBatch(List<BatchChatRequest> requests) {
+        // OpenAI batch API not implemented — run sequentially and return synthetic ID
+        log.warn("OpenAI batch not implemented, running {} requests sequentially", requests.size());
+        return "openai-sequential-" + System.currentTimeMillis();
+    }
+
+    @Override
+    public String getBatchStatus(String batchId) {
+        return "ended";
+    }
+
+    @Override
+    public Map<String, ChatResponse> getBatchResults(String batchId) {
+        // Results are pre-computed in submitBatch — not supported in sequential fallback
+        return new LinkedHashMap<>();
     }
 }

@@ -23,11 +23,11 @@ public class ChatService {
     private final ConversationRepository conversationRepository;
     private final MessageRepository messageRepository;
     private final DocumentChunkRepository chunkRepository;
-    private final ProjectMemoryRepository projectMemoryRepository;
     private final KnowledgeEntryRepository knowledgeEntryRepository;
     private final UserRepository userRepository;
     private final ProjectRepository projectRepository;
     private final ObjectMapper objectMapper;
+    private final UserStyleObservationRepository styleObservationRepository;
 
     @Value("${anthropic.model-chat:claude-haiku-4-5-20251001}")
     private String chatModel;
@@ -37,17 +37,28 @@ public class ChatService {
 
     private static final int HISTORY_LIMIT = 10;
     private static final int RAG_CHUNKS = 5;
-    private static final int RAG_KNOWLEDGE = 3;
+    private static final int RAG_KNOWLEDGE = 5;
 
     @Transactional
-    public String chat(Long projectId, Long userId, String userMessage) {
+    public Conversation createConversation(Long projectId, Long userId) {
+        Project project = projectRepository.findById(projectId).orElseThrow();
+        User user = userRepository.findById(userId).orElseThrow();
+        return createConversation(project, user);
+    }
+
+    @Transactional
+    public String chat(Long projectId, Long userId, Long conversationId, String userMessage) {
         User user = userRepository.findById(userId).orElseThrow();
         Project project = projectRepository.findById(projectId).orElseThrow();
         String userRole = resolveProjectRole(user, project);
 
-        Conversation conversation = conversationRepository
-                .findFirstByProjectIdAndUserIdOrderByCreatedAtDesc(projectId, userId)
-                .orElseGet(() -> createConversation(project, user));
+        Conversation conversation = conversationRepository.findById(conversationId).orElseThrow();
+
+        // Auto-title z pierwszej wiadomości
+        if (conversation.getTitle() == null && !userMessage.isBlank()) {
+            conversation.setTitle(userMessage.substring(0, Math.min(60, userMessage.length())));
+            conversationRepository.save(conversation);
+        }
 
         log.info("=== CHAT REQUEST === projectId={} userId={} role={} message='{}'",
                 projectId, userId, userRole, userMessage);
@@ -87,9 +98,13 @@ public class ChatService {
                 projectId, userId, usedModel, parsed.valuable(), !usedModel.equals(chatModel),
                 finalResp.inputTokens(), finalResp.outputTokens());
 
-        saveMessage(conversation, "user", userMessage, parsed.valuable(), 0, 0, null);
+        saveMessage(conversation, "user", userMessage, parsed.valuable(), 0, 0, null, parsed.category());
         saveMessage(conversation, "assistant", parsed.response(), parsed.valuable(),
-                finalResp.inputTokens(), finalResp.outputTokens(), usedModel);
+                finalResp.inputTokens(), finalResp.outputTokens(), usedModel, parsed.category());
+
+        if (parsed.styleObservation() != null) {
+            saveStyleObservation(user, parsed.styleObservation());
+        }
         if (!parsed.valuable()) {
             log.info("Messages saved but marked processedForKnowledge=true (not valuable for knowledge extraction)");
         }
@@ -97,62 +112,56 @@ public class ChatService {
         return parsed.response();
     }
 
-    // Warstwy 1-3 — statyczne, keszowane przez Anthropic przez 5 min
+    // Warstwa 1 — statyczna, keszowana przez Anthropic przez 5 min
     private String buildCacheablePrompt(Project project, User user, String userRole) {
         StringBuilder sb = new StringBuilder();
 
-        // Warstwa 1 — rola i kontekst
         sb.append("Jesteś asystentem budowlanym projektu \"").append(project.getName()).append("\".\n");
         sb.append("Rozmawiasz z użytkownikiem o roli: ").append(userRole).append(", imię: ").append(user.getName()).append(".\n");
+        if (user.getCommunicationStyle() != null && !user.getCommunicationStyle().isBlank()) {
+            sb.append("Styl komunikacji użytkownika: ").append(user.getCommunicationStyle())
+              .append(" (poziom formalności: ").append(user.getFormalityLevel()).append(").\n");
+            sb.append("Dopasuj ton i formę odpowiedzi do tego stylu.\n");
+        }
         sb.append("Odpowiadasz po polsku, konkretnie i na temat projektu.\n\n");
         sb.append("WAŻNE: Odpowiedź zwróć WYŁĄCZNIE jako JSON bez markdown:\n");
-        sb.append("{\"response\": \"twoja odpowiedź\", \"valuable\": true/false, \"escalate\": false}\n");
-        sb.append("valuable=true gdy Twoja odpowiedź zawiera: ceny, kwoty, daty, nazwy firm/podwykonawców, decyzje, ustalenia, problemy techniczne, dane z dokumentów.\n");
-        sb.append("valuable=false TYLKO gdy odpowiedź to: powitanie, pożegnanie, podziękowanie, prośba o doprecyzowanie bez żadnych danych.\n");
-        sb.append("escalate=true TYLKO gdy pytanie wymaga głębokiej analizy prawnej, finansowej lub porównania wielu dokumentów jednocześnie. W przeciwnym razie escalate=false.\n\n");
-
-        // Warstwa 2 — pamięć projektu
-        projectMemoryRepository.findByProjectIdAndRole(project.getId(), userRole)
-                .filter(m -> m.getContent() != null && !m.getContent().isBlank())
-                .ifPresent(m -> {
-                    log.info("PROMPT LAYER 2: project memory found for role={}", userRole);
-                    sb.append("=== PAMIĘĆ PROJEKTU ===\n").append(m.getContent()).append("\n\n");
-                });
-
-        // Warstwa 3 — wiedza firmowa
-        try {
-            List<String> visibleRoles = rolesUpTo(userRole);
-            // Embed neutral query — wiedza firmowa jest statyczna więc używamy uproszczonego zapytania
-            float[] queryVec = embeddingService.embed("projekt budowlany " + project.getName());
-            String queryVecStr = embeddingService.toVectorString(queryVec);
-            List<KnowledgeEntry> knowledge = knowledgeEntryRepository.findSimilar(queryVecStr, visibleRoles, RAG_KNOWLEDGE);
-            log.info("PROMPT LAYER 3: knowledge entries found={}", knowledge.size());
-            if (!knowledge.isEmpty()) {
-                sb.append("=== WIEDZA FIRMOWA ===\n");
-                knowledge.forEach(k -> sb.append("- ").append(k.getContent()).append("\n"));
-                sb.append("\n");
-            }
-        } catch (Exception e) {
-            log.warn("Knowledge RAG failed: {}", e.getMessage());
-        }
+        sb.append("{\"response\": \"twoja odpowiedź\", \"valuable\": true/false, \"escalate\": false, \"category\": null, \"style_observation\": null}\n");
+        sb.append("valuable=true gdy odpowiedź zawiera konkretną wiedzę: ceny, kwoty, daty, nazwy firm/podwykonawców, decyzje, ustalenia, problemy techniczne, dane z dokumentów, ryzyka, terminy.\n");
+        sb.append("valuable=false gdy: powitanie/pożegnanie/podziękowanie, prośba o doprecyzowanie, ogólna rozmowa o projekcie BEZ konkretnych faktów, odpowiedź typu 'rozumiem'/'ok'/'sprawdzę'.\n");
+        sb.append("escalate=true gdy pytanie wymaga głębokiej analizy prawnej, finansowej lub porównania wielu dokumentów — wtedy NIE odpowiadaj, zwróć TYLKO {\"response\": \"\", \"valuable\": false, \"escalate\": true, \"category\": null, \"style_observation\": null}.\n");
+        sb.append("category (gdy valuable=true): TECHNICZNA | FINANSOWA | PODWYKONAWCY | MATERIALY | null.\n");
+        sb.append("style_observation: jedno zdanie o stylu komunikacji usera w tej wiadomości (krótko/długo, formalnie/nieformalnie, szczegółowo/ogólnie). null gdy brak wystarczających danych.\n");
 
         return sb.toString();
     }
 
-    // Warstwa 4 — dynamiczne RAG chunks dopasowane do pytania usera
+    // Warstwy 2+3 — dynamiczne RAG: wiedza firmowa+projektowa + chunki dokumentów, oba po pytaniu usera
     private String buildDynamicPrompt(Project project, String userRole, String userMessage) {
         StringBuilder sb = new StringBuilder();
         try {
             float[] queryVec = embeddingService.embed(userMessage);
             String queryVecStr = embeddingService.toVectorString(queryVec);
+
+            // Warstwa 2 — wiedza firmowa + projektowa dopasowana do pytania
+            List<String> visibleRoles = rolesUpTo(userRole);
+            List<KnowledgeEntry> knowledge = knowledgeEntryRepository.findSimilarForProject(
+                    project.getId(), queryVecStr, visibleRoles, RAG_KNOWLEDGE);
+            log.info("PROMPT LAYER 2: knowledge entries found={}", knowledge.size());
+            if (!knowledge.isEmpty()) {
+                sb.append("=== WIEDZA ===\n");
+                knowledge.forEach(k -> sb.append("- ").append(k.getContent()).append("\n"));
+                sb.append("\n");
+            }
+
+            // Warstwa 3 — fragmenty dokumentów dopasowane do pytania
             List<DocumentChunk> chunks = chunkRepository.findSimilar(project.getId(), userRole, queryVecStr, RAG_CHUNKS);
-            log.info("PROMPT LAYER 4: document chunks found={}", chunks.size());
+            log.info("PROMPT LAYER 3: document chunks found={}", chunks.size());
             if (!chunks.isEmpty()) {
                 sb.append("=== FRAGMENTY DOKUMENTÓW ===\n");
                 chunks.forEach(c -> sb.append(c.getContent()).append("\n---\n"));
             }
         } catch (Exception e) {
-            log.warn("Document RAG failed: {}", e.getMessage());
+            log.warn("RAG failed: {}", e.getMessage());
         }
         return sb.toString();
     }
@@ -161,14 +170,9 @@ public class ChatService {
         List<Message> last = messageRepository.findLastN(conversation.getId(), HISTORY_LIMIT);
         if (last.isEmpty()) return "";
 
-        // findLastN zwraca DESC, odwracamy
-        List<Message> ordered = last.reversed();
-        // Pomijamy ostatnią wiadomość usera - jest już w userMessage
-        List<Message> history = ordered.size() > 1
-                ? ordered.subList(0, ordered.size() - 1)
-                : List.of();
-
-        return history.stream()
+        // findLastN zwraca DESC, odwracamy na ASC
+        // Aktualne pytanie usera nie jest jeszcze w DB — nic nie pomijamy
+        return last.reversed().stream()
                 .map(m -> m.getRole().toUpperCase() + ": " + m.getContent())
                 .collect(Collectors.joining("\n"));
     }
@@ -202,7 +206,7 @@ public class ChatService {
         return saved;
     }
 
-    private record ParsedChatResponse(String response, boolean valuable, boolean escalate) {}
+    private record ParsedChatResponse(String response, boolean valuable, boolean escalate, String category, String styleObservation) {}
 
     private ParsedChatResponse parseResponse(String raw) {
         try {
@@ -213,16 +217,26 @@ public class ChatService {
                 String response = node.path("response").asText(raw);
                 boolean valuable = node.path("valuable").asBoolean(false);
                 boolean escalate = node.path("escalate").asBoolean(false);
-                return new ParsedChatResponse(response, valuable, escalate);
+                String category = node.path("category").isNull() ? null : node.path("category").asText(null);
+                String styleObs = node.path("style_observation").isNull() ? null : node.path("style_observation").asText(null);
+                return new ParsedChatResponse(response, valuable, escalate, category, styleObs);
             }
         } catch (Exception e) {
             log.warn("Failed to parse structured response, treating as plain text: {}", e.getMessage());
         }
-        return new ParsedChatResponse(raw, false, false);
+        return new ParsedChatResponse(raw, false, false, null, null);
+    }
+
+    private void saveStyleObservation(User user, String observation) {
+        UserStyleObservation obs = new UserStyleObservation();
+        obs.setUser(user);
+        obs.setObservation(observation);
+        styleObservationRepository.save(obs);
+        log.info("DB INSERT user_style_observations userId={} observation='{}'", user.getId(), observation);
     }
 
     private void saveMessage(Conversation conversation, String role, String content,
-                             boolean valuable, int inputTokens, int outputTokens, String model) {
+                             boolean valuable, int inputTokens, int outputTokens, String model, String category) {
         Message m = new Message();
         m.setConversation(conversation);
         m.setRole(role);
@@ -231,6 +245,7 @@ public class ChatService {
         m.setInputTokens(inputTokens);
         m.setOutputTokens(outputTokens);
         m.setModel(model);
+        m.setKnowledgeCategory(category);
         if (model != null && (inputTokens > 0 || outputTokens > 0)) {
             m.setCostUsd(TokenCostCalculator.calculate(model, inputTokens, outputTokens, 0, 0));
         }

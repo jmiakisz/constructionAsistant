@@ -34,7 +34,8 @@ public class JwtFilter extends OncePerRequestFilter {
 
         String token = header.substring(7);
         if (!jwtUtil.isValid(token)) {
-            chain.doFilter(request, response);
+            response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+            response.getWriter().write("{\"error\":\"Token wygasł lub jest nieprawidłowy\"}");
             return;
         }
 

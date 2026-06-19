@@ -1,5 +1,7 @@
 package com.coass.service;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -8,9 +10,7 @@ import org.springframework.http.*;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 @Slf4j
 @Service
@@ -19,6 +19,7 @@ import java.util.Map;
 public class AnthropicService implements AiChatService {
 
     private final RestTemplate restTemplate;
+    private final ObjectMapper objectMapper;
 
     @Value("${anthropic.api-key}")
     private String apiKey;
@@ -26,53 +27,22 @@ public class AnthropicService implements AiChatService {
     @Value("${anthropic.model:claude-sonnet-4-6}")
     private String model;
 
-    private static int toInt(Object val) {
-        return val instanceof Number n ? n.intValue() : 0;
-    }
+    private static final String API_BASE = "https://api.anthropic.com/v1";
 
+    // =========================================================
+    // Synchronous chat
+    // =========================================================
     @Override
     @SuppressWarnings("unchecked")
     public ChatResponse chat(ChatRequest request) {
         String usedModel = request.modelOverride() != null ? request.modelOverride() : model;
-
         log.info("=== ANTHROPIC REQUEST === model={} maxTokens={}", usedModel, request.maxTokens());
-        if (request.systemPrompt() != null) {
-            log.debug("SYSTEM PROMPT:\n{}", request.systemPrompt());
-        }
-        log.debug("USER MESSAGE:\n{}", request.userMessage());
 
-        Map<String, Object> body = new java.util.HashMap<>();
-        body.put("model", usedModel);
-        body.put("max_tokens", request.maxTokens());
-        body.put("messages", List.of(Map.of("role", "user", "content", request.userMessage())));
+        Map<String, Object> body = buildMessageParams(request, usedModel);
 
-        if (request.cacheableSystemPrompt() != null) {
-            // System prompt jako tablica bloków — cacheable + dynamic
-            List<Map<String, Object>> systemBlocks = new java.util.ArrayList<>();
-            systemBlocks.add(Map.of(
-                    "type", "text",
-                    "text", request.cacheableSystemPrompt(),
-                    "cache_control", Map.of("type", "ephemeral")
-            ));
-            if (request.systemPrompt() != null) {
-                systemBlocks.add(Map.of("type", "text", "text", request.systemPrompt()));
-            }
-            body.put("system", systemBlocks);
-            log.info("Prompt caching enabled — cacheable={}chars dynamic={}chars",
-                    request.cacheableSystemPrompt().length(),
-                    request.systemPrompt() != null ? request.systemPrompt().length() : 0);
-        } else if (request.systemPrompt() != null) {
-            body.put("system", request.systemPrompt());
-        }
-
-        HttpHeaders headers = new HttpHeaders();
-        headers.set("x-api-key", apiKey);
-        headers.set("anthropic-version", "2023-06-01");
-        headers.set("anthropic-beta", "prompt-caching-2024-07-31");
-        headers.setContentType(MediaType.APPLICATION_JSON);
-
+        HttpHeaders headers = buildHeaders(true);
         Map<String, Object> response = restTemplate.postForObject(
-                "https://api.anthropic.com/v1/messages",
+                API_BASE + "/messages",
                 new HttpEntity<>(body, headers),
                 Map.class
         );
@@ -83,15 +53,137 @@ public class AnthropicService implements AiChatService {
         int inputTokens = 0, outputTokens = 0, cacheCreation = 0, cacheRead = 0;
         Map<String, Object> usage = (Map<String, Object>) response.get("usage");
         if (usage != null) {
-            inputTokens    = toInt(usage.get("input_tokens"));
-            outputTokens   = toInt(usage.get("output_tokens"));
-            cacheCreation  = toInt(usage.get("cache_creation_input_tokens"));
-            cacheRead      = toInt(usage.get("cache_read_input_tokens"));
-            log.info("=== ANTHROPIC RESPONSE === inputTokens={} outputTokens={} cacheCreation={} cacheRead={}",
+            inputTokens   = toInt(usage.get("input_tokens"));
+            outputTokens  = toInt(usage.get("output_tokens"));
+            cacheCreation = toInt(usage.get("cache_creation_input_tokens"));
+            cacheRead     = toInt(usage.get("cache_read_input_tokens"));
+            log.info("=== ANTHROPIC RESPONSE === in={} out={} cacheCreate={} cacheRead={}",
                     inputTokens, outputTokens, cacheCreation, cacheRead);
         }
         log.debug("AI RESPONSE:\n{}", text);
-
         return new ChatResponse(text, inputTokens, outputTokens, cacheCreation, cacheRead);
+    }
+
+    // =========================================================
+    // Batch API — 50% taniej, asynchroniczne
+    // =========================================================
+    @Override
+    @SuppressWarnings("unchecked")
+    public String submitBatch(List<BatchChatRequest> requests) {
+        List<Map<String, Object>> batchRequests = new ArrayList<>();
+        for (BatchChatRequest req : requests) {
+            String usedModel = req.request().modelOverride() != null ? req.request().modelOverride() : model;
+            Map<String, Object> params = buildMessageParams(req.request(), usedModel);
+            batchRequests.add(Map.of("custom_id", req.customId(), "params", params));
+        }
+
+        Map<String, Object> body = Map.of("requests", batchRequests);
+        HttpHeaders headers = buildHeaders(false);
+
+        Map<String, Object> response = restTemplate.postForObject(
+                API_BASE + "/messages/batches",
+                new HttpEntity<>(body, headers),
+                Map.class
+        );
+
+        String batchId = (String) response.get("id");
+        log.info("=== BATCH SUBMITTED === id={} requests={}", batchId, requests.size());
+        return batchId;
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public String getBatchStatus(String batchId) {
+        HttpHeaders headers = buildHeaders(false);
+        ResponseEntity<Map> response = restTemplate.exchange(
+                API_BASE + "/messages/batches/" + batchId,
+                HttpMethod.GET,
+                new HttpEntity<>(headers),
+                Map.class
+        );
+        String status = (String) response.getBody().get("processing_status");
+        log.debug("Batch {} status: {}", batchId, status);
+        return status;
+    }
+
+    @Override
+    public Map<String, ChatResponse> getBatchResults(String batchId) {
+        HttpHeaders headers = buildHeaders(false);
+        ResponseEntity<String> response = restTemplate.exchange(
+                API_BASE + "/messages/batches/" + batchId + "/results",
+                HttpMethod.GET,
+                new HttpEntity<>(headers),
+                String.class
+        );
+
+        Map<String, ChatResponse> results = new LinkedHashMap<>();
+        String[] lines = response.getBody().split("\n");
+        for (String line : lines) {
+            if (line.isBlank()) continue;
+            try {
+                JsonNode node = objectMapper.readTree(line);
+                String customId = node.path("custom_id").asText();
+                JsonNode result = node.path("result");
+                if (!"succeeded".equals(result.path("type").asText())) {
+                    log.warn("Batch item {} failed: {}", customId, result.path("error").toString());
+                    continue;
+                }
+                JsonNode message = result.path("message");
+                String text = message.path("content").get(0).path("text").asText();
+                JsonNode usage = message.path("usage");
+                results.put(customId, new ChatResponse(
+                        text,
+                        usage.path("input_tokens").asInt(0),
+                        usage.path("output_tokens").asInt(0),
+                        usage.path("cache_creation_input_tokens").asInt(0),
+                        usage.path("cache_read_input_tokens").asInt(0)
+                ));
+            } catch (Exception e) {
+                log.warn("Failed to parse batch result line: {}", e.getMessage());
+            }
+        }
+        log.info("=== BATCH RESULTS === batchId={} succeeded={}", batchId, results.size());
+        return results;
+    }
+
+    // =========================================================
+    // Helpers
+    // =========================================================
+    private Map<String, Object> buildMessageParams(ChatRequest request, String usedModel) {
+        Map<String, Object> params = new HashMap<>();
+        params.put("model", usedModel);
+        params.put("max_tokens", request.maxTokens());
+        params.put("messages", List.of(Map.of("role", "user", "content", request.userMessage())));
+
+        if (request.cacheableSystemPrompt() != null && !request.cacheableSystemPrompt().isBlank()) {
+            List<Map<String, Object>> systemBlocks = new ArrayList<>();
+            systemBlocks.add(Map.of(
+                    "type", "text",
+                    "text", request.cacheableSystemPrompt(),
+                    "cache_control", Map.of("type", "ephemeral")
+            ));
+            if (request.systemPrompt() != null && !request.systemPrompt().isBlank()) {
+                systemBlocks.add(Map.of("type", "text", "text", request.systemPrompt()));
+            }
+            params.put("system", systemBlocks);
+        } else if (request.systemPrompt() != null && !request.systemPrompt().isBlank()) {
+            params.put("system", request.systemPrompt());
+        }
+        return params;
+    }
+
+    private HttpHeaders buildHeaders(boolean withCaching) {
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("x-api-key", apiKey);
+        headers.set("anthropic-version", "2023-06-01");
+        if (withCaching) {
+            headers.set("anthropic-beta", "prompt-caching-2024-07-31");
+        }
+        headers.setContentType(MediaType.APPLICATION_JSON);
+        return headers;
+    }
+
+    private static int toInt(Object val) {
+        return val instanceof Number n ? n.intValue() : 0;
     }
 }

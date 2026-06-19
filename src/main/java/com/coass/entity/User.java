@@ -30,6 +30,12 @@ public class User {
     @Column(nullable = false, length = 20)
     private String companyRole = "MEMBER";
 
+    @Column(columnDefinition = "TEXT")
+    private String communicationStyle;
+
+    @Column(length = 20)
+    private String formalityLevel = "NEUTRAL";
+
     @Column(nullable = false)
     private LocalDateTime createdAt = LocalDateTime.now();
 

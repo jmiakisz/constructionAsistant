@@ -13,7 +13,6 @@ import org.apache.tika.parser.pdf.PDFParserConfig;
 import org.apache.tika.sax.WriteOutContentHandler;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
-import org.xml.sax.ContentHandler;
 
 import java.io.FileInputStream;
 import java.io.InputStream;

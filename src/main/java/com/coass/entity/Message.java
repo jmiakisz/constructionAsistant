@@ -38,6 +38,9 @@ public class Message {
     @Column(length = 50)
     private String model;
 
+    @Column(length = 50)
+    private String knowledgeCategory;
+
     @Column(nullable = false)
     private boolean processedForKnowledge = false;
 
