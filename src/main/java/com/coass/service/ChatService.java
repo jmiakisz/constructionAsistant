@@ -38,6 +38,8 @@ public class ChatService {
     private static final int HISTORY_LIMIT = 10;
     private static final int RAG_CHUNKS = 5;
     private static final int RAG_KNOWLEDGE = 5;
+    private static final int COMPACT_THRESHOLD = 50;
+    private static final int COMPACT_KEEP = 10;
 
     @Transactional
     public Conversation createConversation(Long projectId, Long userId) {
@@ -109,6 +111,8 @@ public class ChatService {
             log.info("Messages saved but marked processedForKnowledge=true (not valuable for knowledge extraction)");
         }
 
+        maybeCompact(conversation);
+
         return parsed.response();
     }
 
@@ -168,13 +172,53 @@ public class ChatService {
 
     private String buildHistory(Conversation conversation) {
         List<Message> last = messageRepository.findLastN(conversation.getId(), HISTORY_LIMIT);
-        if (last.isEmpty()) return "";
+        if (last.isEmpty() && conversation.getSummary() == null) return "";
 
-        // findLastN zwraca DESC, odwracamy na ASC
-        // Aktualne pytanie usera nie jest jeszcze w DB — nic nie pomijamy
-        return last.reversed().stream()
+        StringBuilder sb = new StringBuilder();
+        if (conversation.getSummary() != null) {
+            sb.append("PODSUMOWANIE WCZEŚNIEJSZEJ ROZMOWY:\n").append(conversation.getSummary()).append("\n\n");
+        }
+        if (!last.isEmpty()) {
+            // findLastN zwraca DESC, odwracamy na ASC
+            sb.append(last.reversed().stream()
+                    .map(m -> m.getRole().toUpperCase() + ": " + m.getContent())
+                    .collect(Collectors.joining("\n")));
+        }
+        return sb.toString();
+    }
+
+    private void maybeCompact(Conversation conversation) {
+        long count = messageRepository.countByConversationId(conversation.getId());
+        if (count < COMPACT_THRESHOLD) return;
+
+        int toArchive = (int) count - COMPACT_KEEP;
+        List<Message> old = messageRepository.findOldestN(conversation.getId(), toArchive);
+        if (old.isEmpty()) return;
+
+        log.info("COMPACT conversation={} archiving {} messages (total={})", conversation.getId(), old.size(), count);
+
+        String transcript = old.stream()
                 .map(m -> m.getRole().toUpperCase() + ": " + m.getContent())
                 .collect(Collectors.joining("\n"));
+
+        String sysPrompt = "Zrób zwięzłe streszczenie poniższej rozmowy (max 500 słów) zachowując kluczowe fakty, decyzje, ustalenia, nazwy i kwoty. Odpowiedz TYLKO streszczeniem, bez wstępu.";
+
+        try {
+            ChatResponse summaryResp = aiChatService.chat(
+                    ChatRequest.of(sysPrompt, transcript).withModelOverride(chatModel));
+            String newSummary = summaryResp.text().strip();
+
+            if (conversation.getSummary() != null) {
+                newSummary = conversation.getSummary() + "\n---\n" + newSummary;
+            }
+            conversation.setSummary(newSummary);
+            conversationRepository.save(conversation);
+
+            messageRepository.deleteAll(old);
+            log.info("COMPACT done conversation={} summary_length={}", conversation.getId(), newSummary.length());
+        } catch (Exception e) {
+            log.warn("COMPACT failed conversation={}: {}", conversation.getId(), e.getMessage());
+        }
     }
 
     private String resolveProjectRole(User user, Project project) {

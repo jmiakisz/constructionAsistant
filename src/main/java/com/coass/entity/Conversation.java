@@ -26,6 +26,12 @@ public class Conversation {
     @JoinColumn(name = "user_id", nullable = false)
     private User user;
 
+    @Column(length = 255)
+    private String title;
+
+    @Column(columnDefinition = "TEXT")
+    private String summary;
+
     @Column(nullable = false)
     private LocalDateTime createdAt = LocalDateTime.now();
 
