@@ -2,8 +2,11 @@ package com.coass.controller;
 
 import com.coass.dto.document.DocumentResponse;
 import com.coass.entity.AiIndexingMode;
+import com.coass.entity.ProjectAlert;
+import com.coass.repository.ProjectAlertRepository;
 import com.coass.security.CoassUserDetails;
 import com.coass.service.DocumentService;
+import com.coass.service.ProjectService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -23,13 +26,64 @@ import java.util.List;
 import java.util.Map;
 
 @RestController
-@RequestMapping("/api/projects/{projectId}/documents")
+@RequestMapping("/api/projects/{projectId}")
 @RequiredArgsConstructor
 public class DocumentController {
 
     private final DocumentService documentService;
+    private final ProjectAlertRepository alertRepository;
+    private final ProjectService projectService;
 
-    @PostMapping
+    // ── Alerts ──────────────────────────────────────────────────────────────────
+
+    @GetMapping("/alerts")
+    public ResponseEntity<List<Map<String, Object>>> getAlerts(
+            @PathVariable Long projectId,
+            @AuthenticationPrincipal CoassUserDetails user) {
+
+        projectService.requireMembership(projectId, user.getUserId());
+        List<Map<String, Object>> result = alertRepository
+                .findByProjectIdOrderByCreatedAtDesc(projectId)
+                .stream()
+                .map(a -> {
+                    java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();
+                    m.put("id", a.getId());
+                    m.put("level", a.getLevel());
+                    m.put("message", a.getMessage());
+                    m.put("documentId", a.getDocument() != null ? a.getDocument().getId() : null);
+                    m.put("createdAt", a.getCreatedAt().toString());
+                    return m;
+                })
+                .toList();
+        return ResponseEntity.ok(result);
+    }
+
+    @GetMapping("/documents/{documentId}/alerts")
+    public ResponseEntity<List<Map<String, Object>>> getDocumentAlerts(
+            @PathVariable Long projectId,
+            @PathVariable Long documentId,
+            @AuthenticationPrincipal CoassUserDetails user) {
+
+        projectService.requireMembership(projectId, user.getUserId());
+        List<Map<String, Object>> result = alertRepository
+                .findByProjectIdAndDocumentIdOrderByCreatedAtDesc(projectId, documentId)
+                .stream()
+                .map(a -> {
+                    java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();
+                    m.put("id", a.getId());
+                    m.put("level", a.getLevel());
+                    m.put("message", a.getMessage());
+                    m.put("documentId", documentId);
+                    m.put("createdAt", a.getCreatedAt().toString());
+                    return m;
+                })
+                .toList();
+        return ResponseEntity.ok(result);
+    }
+
+    // ── Documents ────────────────────────────────────────────────────────────────
+
+    @PostMapping("/documents")
     public ResponseEntity<DocumentResponse> upload(
             @PathVariable Long projectId,
             @RequestParam MultipartFile file,
@@ -43,7 +97,7 @@ public class DocumentController {
         );
     }
 
-    @PostMapping("/bulk")
+    @PostMapping("/documents/bulk")
     public ResponseEntity<List<DocumentResponse>> uploadBulk(
             @PathVariable Long projectId,
             @RequestParam List<MultipartFile> files,
@@ -58,7 +112,7 @@ public class DocumentController {
         );
     }
 
-    @GetMapping
+    @GetMapping("/documents")
     public ResponseEntity<List<DocumentResponse>> list(
             @PathVariable Long projectId,
             @AuthenticationPrincipal CoassUserDetails user) {
@@ -66,7 +120,7 @@ public class DocumentController {
         return ResponseEntity.ok(documentService.listForProject(projectId, user.getUserId()));
     }
 
-    @GetMapping("/{documentId}")
+    @GetMapping("/documents/{documentId}")
     public ResponseEntity<DocumentResponse> get(
             @PathVariable Long projectId,
             @PathVariable Long documentId,
@@ -75,7 +129,7 @@ public class DocumentController {
         return ResponseEntity.ok(documentService.get(documentId, user.getUserId()));
     }
 
-    @GetMapping("/{documentId}/download")
+    @GetMapping("/documents/{documentId}/download")
     public ResponseEntity<Resource> download(
             @PathVariable Long projectId,
             @PathVariable Long documentId,
@@ -110,7 +164,7 @@ public class DocumentController {
         return "application/octet-stream";
     }
 
-    @DeleteMapping("/{documentId}")
+    @DeleteMapping("/documents/{documentId}")
     public ResponseEntity<Void> delete(
             @PathVariable Long projectId,
             @PathVariable Long documentId,
@@ -119,7 +173,7 @@ public class DocumentController {
         return ResponseEntity.noContent().build();
     }
 
-    @PostMapping("/{documentId}/archive")
+    @PostMapping("/documents/{documentId}/archive")
     public ResponseEntity<Void> archive(
             @PathVariable Long projectId,
             @PathVariable Long documentId,
@@ -128,7 +182,7 @@ public class DocumentController {
         return ResponseEntity.noContent().build();
     }
 
-    @PatchMapping("/{documentId}/folder")
+    @PatchMapping("/documents/{documentId}/folder")
     public ResponseEntity<DocumentResponse> moveToFolder(
             @PathVariable Long projectId,
             @PathVariable Long documentId,
