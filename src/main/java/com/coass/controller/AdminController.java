@@ -133,6 +133,33 @@ public class AdminController {
                 .toList());
     }
 
+    @PatchMapping("/knowledge/{id}")
+    public ResponseEntity<Map<String, Object>> updateKnowledge(
+            @PathVariable Long id,
+            @RequestBody Map<String, Object> body) {
+        KnowledgeEntry entry = knowledgeEntryRepository.findById(id).orElse(null);
+        if (entry == null) return ResponseEntity.notFound().build();
+        if (body.containsKey("content")) {
+            entry.setContent((String) body.get("content"));
+            entry.setEmbedding(null); // reset — zostanie odtworzone przez nightly
+        }
+        if (body.containsKey("category")) entry.setCategory((String) body.get("category"));
+        if (body.containsKey("confidence")) {
+            Object c = body.get("confidence");
+            entry.setConfidence(c instanceof Number n ? n.intValue() : Integer.parseInt(c.toString()));
+        }
+        entry.setLastConfirmedAt(java.time.LocalDateTime.now());
+        knowledgeEntryRepository.save(entry);
+        return ResponseEntity.ok(toKnowledgeMap(entry));
+    }
+
+    @DeleteMapping("/knowledge/{id}")
+    public ResponseEntity<Void> deleteKnowledge(@PathVariable Long id) {
+        if (!knowledgeEntryRepository.existsById(id)) return ResponseEntity.notFound().build();
+        knowledgeEntryRepository.deleteById(id);
+        return ResponseEntity.noContent().build();
+    }
+
     // =========================================================
     // Użytkownicy
     // =========================================================
