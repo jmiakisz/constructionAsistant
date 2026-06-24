@@ -79,7 +79,14 @@ public class ProjectService {
     }
 
     public Role requireMembership(Long projectId, Long userId) {
-        return memberRepository.findRoleByProjectAndUser(projectId, userId)
-                .orElseThrow(() -> new AccessDeniedException("Not a member of this project"));
+        java.util.Optional<Role> projectRole = memberRepository.findRoleByProjectAndUser(projectId, userId);
+        if (projectRole.isPresent()) return projectRole.get();
+
+        boolean isCompanyAdmin = userRepository.findById(userId)
+                .map(u -> "ADMIN".equals(u.getCompanyRole()) || "OWNER".equals(u.getCompanyRole()))
+                .orElse(false);
+        if (isCompanyAdmin) return Role.ADMIN;
+
+        throw new AccessDeniedException("Not a member of this project");
     }
 }

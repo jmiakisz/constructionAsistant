@@ -2,6 +2,7 @@ package com.coass.service;
 
 import com.coass.dto.document.DocumentResponse;
 import com.coass.entity.*;
+import com.coass.repository.DocumentChunkRepository;
 import com.coass.repository.DocumentRepository;
 import com.coass.repository.ProjectRepository;
 import com.coass.repository.UserRepository;
@@ -25,10 +26,12 @@ import java.util.List;
 public class DocumentService {
 
     private final DocumentRepository documentRepository;
+    private final DocumentChunkRepository chunkRepository;
     private final ProjectRepository projectRepository;
     private final UserRepository userRepository;
     private final DocumentProcessingService processingService;
     private final ProjectService projectService;
+    private final com.coass.repository.DocumentFolderRepository folderRepository;
 
     @Value("${app.upload-dir:uploads}")
     private String uploadDir;
@@ -38,7 +41,7 @@ public class DocumentService {
                                    DocumentType documentType, AiIndexingMode indexingMode,
                                    Role minRole) throws IOException {
         Role userRole = projectService.requireMembership(projectId, userId);
-        if (minRole == null) minRole = userRole;
+        final Role effectiveRole = (minRole != null) ? minRole : userRole;
 
         Path dir = Paths.get(uploadDir, projectId.toString());
         Files.createDirectories(dir);
@@ -54,7 +57,11 @@ public class DocumentService {
         doc.setFilePath(filePath.toString());
         doc.setDocumentType(documentType);
         doc.setAiIndexingMode(indexingMode);
-        doc.setVisibleForRoles(new String[]{minRole.name()});
+        String[] visibleRoles = java.util.Arrays.stream(Role.values())
+                .filter(r -> r.isAtLeast(effectiveRole))
+                .map(Enum::name)
+                .toArray(String[]::new);
+        doc.setVisibleForRoles(visibleRoles);
         doc.setStatus(DocumentStatus.PROCESSING.name());
         documentRepository.save(doc);
 
@@ -70,10 +77,15 @@ public class DocumentService {
 
     public List<DocumentResponse> uploadBulk(Long projectId, Long userId, List<MultipartFile> files,
                                               DocumentType documentType, AiIndexingMode indexingMode,
-                                              Role minRole) throws IOException {
+                                              Role minRole, Long folderId) throws IOException {
         List<DocumentResponse> results = new java.util.ArrayList<>();
         for (MultipartFile file : files) {
-            results.add(upload(projectId, userId, file, documentType, indexingMode, minRole));
+            DocumentResponse resp = upload(projectId, userId, file, documentType, indexingMode, minRole);
+            if (folderId != null) {
+                results.add(moveToFolder(resp.id(), projectId, userId, folderId));
+            } else {
+                results.add(resp);
+            }
         }
         return results;
     }
@@ -82,6 +94,7 @@ public class DocumentService {
     public List<DocumentResponse> listForProject(Long projectId, Long userId) {
         Role userRole = projectService.requireMembership(projectId, userId);
         return documentRepository.findByProjectId(projectId).stream()
+                .filter(doc -> !DocumentStatus.ARCHIVED.name().equals(doc.getStatus()))
                 .filter(doc -> canSee(doc, userRole))
                 .map(DocumentResponse::from)
                 .toList();
@@ -96,6 +109,55 @@ public class DocumentService {
         if (!canSee(doc, userRole)) throw new AccessDeniedException("No access to this document");
 
         return DocumentResponse.from(doc);
+    }
+
+    @Transactional
+    public DocumentResponse moveToFolder(Long documentId, Long projectId, Long userId, Long folderId) {
+        projectService.requireMembership(projectId, userId);
+        Document doc = documentRepository.findById(documentId)
+                .orElseThrow(() -> new IllegalArgumentException("Document not found"));
+        if (folderId == null) {
+            doc.setFolder(null);
+        } else {
+            com.coass.entity.DocumentFolder folder = folderRepository.findById(folderId)
+                    .filter(f -> f.getProject().getId().equals(projectId))
+                    .orElseThrow(() -> new IllegalArgumentException("Folder not found"));
+            doc.setFolder(folder);
+        }
+        return DocumentResponse.from(documentRepository.save(doc));
+    }
+
+    @Transactional
+    public void deleteDocument(Long documentId, Long userId) {
+        Document doc = documentRepository.findById(documentId)
+                .orElseThrow(() -> new IllegalArgumentException("Document not found"));
+        projectService.requireMembership(doc.getProject().getId(), userId);
+        chunkRepository.deleteByDocumentId(documentId);
+        try { Files.deleteIfExists(Paths.get(doc.getFilePath())); } catch (Exception ignored) {}
+        documentRepository.delete(doc);
+    }
+
+    @Transactional
+    public void archiveDocument(Long documentId, Long userId) {
+        Document doc = documentRepository.findById(documentId)
+                .orElseThrow(() -> new IllegalArgumentException("Document not found"));
+        projectService.requireMembership(doc.getProject().getId(), userId);
+        chunkRepository.deleteByDocumentId(documentId);
+        doc.setStatus(DocumentStatus.ARCHIVED.name());
+        documentRepository.save(doc);
+    }
+
+    public record FileResult(Path path, String originalName) {}
+
+    @Transactional(readOnly = true)
+    public FileResult resolveFile(Long documentId, Long userId) {
+        Document doc = documentRepository.findById(documentId)
+                .orElseThrow(() -> new IllegalArgumentException("Document not found"));
+        Role userRole = projectService.requireMembership(doc.getProject().getId(), userId);
+        if (!canSee(doc, userRole)) throw new AccessDeniedException("No access to document");
+        Path path = Paths.get(doc.getFilePath());
+        if (!Files.exists(path)) throw new IllegalArgumentException("File not found on disk");
+        return new FileResult(path, doc.getName());
     }
 
     private boolean canSee(Document doc, Role userRole) {

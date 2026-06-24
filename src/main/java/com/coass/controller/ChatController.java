@@ -5,13 +5,17 @@ import com.coass.entity.Message;
 import com.coass.repository.ConversationRepository;
 import com.coass.repository.MessageRepository;
 import com.coass.security.CoassUserDetails;
+import com.coass.service.AttachedFile;
 import com.coass.service.ChatService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 
@@ -62,6 +66,11 @@ public class ChatController {
             @PathVariable Long convId,
             @AuthenticationPrincipal CoassUserDetails user) {
 
+        Conversation conv = conversationRepository.findById(convId).orElse(null);
+        if (conv == null || !conv.getUser().getId().equals(user.getUserId())) {
+            return ResponseEntity.status(403).build();
+        }
+
         List<Map<String, Object>> messages = messageRepository
                 .findByConversationIdOrderByCreatedAtAsc(convId)
                 .stream()
@@ -76,8 +85,8 @@ public class ChatController {
         return ResponseEntity.ok(messages);
     }
 
-    // Wyślij wiadomość w rozmowie
-    @PostMapping("/{convId}/messages")
+    // Wyślij wiadomość — JSON (bez plików)
+    @PostMapping(value = "/{convId}/messages", consumes = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<Map<String, String>> sendMessage(
             @PathVariable Long projectId,
             @PathVariable Long convId,
@@ -88,10 +97,59 @@ public class ChatController {
         if (message == null || message.isBlank()) {
             return ResponseEntity.badRequest().body(Map.of("error", "message is required"));
         }
-
         log.info("HTTP POST /conversations/{}/messages projectId={} userId={}", convId, projectId, user.getUserId());
-        String response = chatService.chat(projectId, user.getUserId(), convId, message);
+        String response = chatService.chat(projectId, user.getUserId(), convId, message, List.of());
         return ResponseEntity.ok(Map.of("response", response));
+    }
+
+    // Wyślij wiadomość — multipart (z załącznikami)
+    @PostMapping(value = "/{convId}/messages", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<Map<String, String>> sendMessageWithFiles(
+            @PathVariable Long projectId,
+            @PathVariable Long convId,
+            @RequestPart("message") String message,
+            @RequestPart(value = "files", required = false) List<MultipartFile> files,
+            @AuthenticationPrincipal CoassUserDetails user) {
+
+        if (message == null || message.isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "message is required"));
+        }
+
+        List<AttachedFile> attachments = List.of();
+        if (files != null && !files.isEmpty()) {
+            attachments = files.stream()
+                    .filter(f -> !f.isEmpty())
+                    .map(f -> {
+                        try {
+                            String mediaType = resolveMediaType(f);
+                            String base64 = Base64.getEncoder().encodeToString(f.getBytes());
+                            log.info("  [ATTACH] {} {} {}KB", f.getOriginalFilename(), mediaType, f.getSize() / 1024);
+                            return new AttachedFile(f.getOriginalFilename(), mediaType, base64);
+                        } catch (Exception e) {
+                            log.warn("Failed to read attachment {}: {}", f.getOriginalFilename(), e.getMessage());
+                            return null;
+                        }
+                    })
+                    .filter(java.util.Objects::nonNull)
+                    .toList();
+        }
+
+        log.info("HTTP POST /conversations/{}/messages projectId={} userId={} attachments={}",
+                convId, projectId, user.getUserId(), attachments.size());
+        String response = chatService.chat(projectId, user.getUserId(), convId, message, attachments);
+        return ResponseEntity.ok(Map.of("response", response));
+    }
+
+    private String resolveMediaType(MultipartFile file) {
+        String ct = file.getContentType();
+        if (ct != null && !ct.isBlank() && !"application/octet-stream".equals(ct)) return ct;
+        String name = file.getOriginalFilename() != null ? file.getOriginalFilename().toLowerCase() : "";
+        if (name.endsWith(".pdf"))  return "application/pdf";
+        if (name.endsWith(".jpg") || name.endsWith(".jpeg")) return "image/jpeg";
+        if (name.endsWith(".png"))  return "image/png";
+        if (name.endsWith(".webp")) return "image/webp";
+        if (name.endsWith(".gif"))  return "image/gif";
+        return ct != null ? ct : "application/octet-stream";
     }
 
     private Map<String, Object> toConvMap(Conversation conv, String lastMessagePreview) {

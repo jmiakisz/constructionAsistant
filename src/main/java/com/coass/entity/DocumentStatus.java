@@ -1,5 +1,5 @@
 package com.coass.entity;
 
 public enum DocumentStatus {
-    PROCESSING, READY, ERROR
+    PROCESSING, READY, ERROR, ARCHIVED
 }

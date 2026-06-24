@@ -44,4 +44,31 @@ public interface DocumentChunkRepository extends JpaRepository<DocumentChunk, Lo
     List<DocumentChunk> findByDocumentId(Long documentId);
 
     void deleteByDocumentId(Long documentId);
+
+    // Statystyki procesowania dokumentów per projekt
+    @Query(value = """
+        SELECT p.id, p.name,
+               COUNT(DISTINCT d.id)  AS documents,
+               COUNT(dc.id)          AS chunks,
+               COUNT(dc.id) FILTER (WHERE dc.embedding IS NOT NULL) AS indexed_chunks
+        FROM projects p
+        LEFT JOIN documents d ON d.project_id = p.id
+        LEFT JOIN document_chunks dc ON dc.document_id = d.id
+        GROUP BY p.id, p.name
+        ORDER BY documents DESC
+        """, nativeQuery = true)
+    List<Object[]> getDocumentStatsByProject();
+
+    // Procesowanie według dni (ostatnie 30 dni)
+    @Query(value = """
+        SELECT DATE(d.created_at) AS day,
+               COUNT(DISTINCT d.id) AS documents,
+               COUNT(dc.id)         AS chunks
+        FROM documents d
+        LEFT JOIN document_chunks dc ON dc.document_id = d.id
+        WHERE d.created_at >= NOW() - INTERVAL '30 days'
+        GROUP BY DATE(d.created_at)
+        ORDER BY day
+        """, nativeQuery = true)
+    List<Object[]> getDailyDocumentStats();
 }

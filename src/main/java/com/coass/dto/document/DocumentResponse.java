@@ -16,6 +16,7 @@ public record DocumentResponse(
         String status,
         List<String> visibleForRoles,
         Long projectId,
+        Long folderId,
         LocalDateTime createdAt,
         String extractedData
 ) {
@@ -28,6 +29,7 @@ public record DocumentResponse(
                 d.getStatus(),
                 Arrays.asList(d.getVisibleForRoles()),
                 d.getProject().getId(),
+                d.getFolder() != null ? d.getFolder().getId() : null,
                 d.getCreatedAt(),
                 d.getExtractedData()
         );

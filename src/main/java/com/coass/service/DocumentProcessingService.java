@@ -44,7 +44,7 @@ public class DocumentProcessingService {
             log.info("DB INSERT document_chunks documentId={} total={}", doc.getId(), chunks.size());
             for (int i = 0; i < chunks.size(); i++) {
                 String content = chunks.get(i);
-                float[] vector = embeddingService.embed(content);
+                float[] vector = embeddingService.embed(content, "DOCUMENT_CHUNK", doc.getProject());
                 String vectorStr = embeddingService.toVectorString(vector);
                 chunkRepository.insertWithEmbedding(doc.getId(), content, vectorStr, i);
                 log.debug("DB INSERT document_chunks chunkIndex={} contentLength={}", i, content.length());

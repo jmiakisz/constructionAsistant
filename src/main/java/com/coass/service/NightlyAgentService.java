@@ -266,7 +266,7 @@ public class NightlyAgentService {
                 String validUntilStr = entry.path("valid_until").isNull() ? null : entry.path("valid_until").asText(null);
                 Long projectId = entry.path("project_specific").asBoolean(false) ? project.getId() : null;
 
-                float[] vec = embeddingService.embed(content);
+                float[] vec = embeddingService.embed(content, "KNOWLEDGE_ENTRY", project);
                 String vecStr = embeddingService.toVectorString(vec);
 
                 final String fContent = content, fCategory = category, fEntryType = entryType,

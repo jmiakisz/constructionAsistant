@@ -11,7 +11,8 @@ import java.util.List;
 
 public interface KnowledgeEntryRepository extends JpaRepository<KnowledgeEntry, Long> {
 
-    // Firmowa (cross-project) + projektowa — oba dopasowane do pytania usera, tylko powyżej progu trafności
+    // Firmowa (project_id=NULL) i projektowa (project_id=projectId) — obie filtrowane przez source_role
+    // Wiedza firmowa zawiera dane wrażliwe (obroty, zasoby) — dostępna tylko dla odpowiednich ról
     @Query(value = """
         SELECT ke.* FROM knowledge_entries ke
         WHERE ke.embedding IS NOT NULL
@@ -81,4 +82,7 @@ public interface KnowledgeEntryRepository extends JpaRepository<KnowledgeEntry, 
     List<Object[]> findPotentialDuplicates(@Param("maxDistance") double maxDistance);
 
     List<KnowledgeEntry> findByProjectId(Long projectId);
+
+    @Query("SELECT ke FROM KnowledgeEntry ke WHERE ke.project.id = :projectId AND ke.sourceRole IN :visibleRoles ORDER BY ke.createdAt DESC LIMIT 20")
+    List<KnowledgeEntry> findRecentForBriefing(@Param("projectId") Long projectId, @Param("visibleRoles") List<String> visibleRoles);
 }

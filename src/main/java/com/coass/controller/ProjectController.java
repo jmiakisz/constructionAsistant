@@ -6,6 +6,7 @@ import com.coass.entity.ProjectAlert;
 import com.coass.entity.Role;
 import com.coass.repository.ProjectAlertRepository;
 import com.coass.security.CoassUserDetails;
+import com.coass.service.BriefingService;
 import com.coass.service.ProjectService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -23,6 +24,7 @@ public class ProjectController {
 
     private final ProjectService projectService;
     private final ProjectAlertRepository alertRepository;
+    private final BriefingService briefingService;
 
     @PostMapping
     public ResponseEntity<ProjectResponse> create(
@@ -59,6 +61,14 @@ public class ProjectController {
                 ))
                 .toList();
         return ResponseEntity.ok(result);
+    }
+
+    @GetMapping("/{id}/briefing")
+    public ResponseEntity<Map<String, Object>> getBriefing(
+            @PathVariable Long id,
+            @RequestParam(defaultValue = "false") boolean refresh,
+            @AuthenticationPrincipal CoassUserDetails user) {
+        return ResponseEntity.ok(briefingService.getBriefing(id, user.getUserId(), refresh));
     }
 
     @PostMapping("/{id}/members")

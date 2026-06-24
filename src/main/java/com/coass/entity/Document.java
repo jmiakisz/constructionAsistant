@@ -48,6 +48,10 @@ public class Document {
     @JoinColumn(name = "uploaded_by")
     private User uploadedBy;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "folder_id")
+    private DocumentFolder folder;
+
     @Column(nullable = false)
     private LocalDateTime createdAt = LocalDateTime.now();
 

@@ -40,7 +40,9 @@ public class AnthropicService implements AiChatService {
 
         Map<String, Object> body = buildMessageParams(request, usedModel);
 
-        HttpHeaders headers = buildHeaders(true);
+        boolean hasPdf = request.attachments() != null &&
+                request.attachments().stream().anyMatch(AttachedFile::isPdf);
+        HttpHeaders headers = buildHeaders(true, hasPdf);
         Map<String, Object> response = restTemplate.postForObject(
                 API_BASE + "/messages",
                 new HttpEntity<>(body, headers),
@@ -153,7 +155,36 @@ public class AnthropicService implements AiChatService {
         Map<String, Object> params = new HashMap<>();
         params.put("model", usedModel);
         params.put("max_tokens", request.maxTokens());
-        params.put("messages", List.of(Map.of("role", "user", "content", request.userMessage())));
+
+        // Historia jako właściwe naprzemienne user/assistant turns
+        List<Map<String, Object>> messages = new ArrayList<>();
+        if (request.history() != null) {
+            for (HistoryTurn turn : request.history()) {
+                messages.add(Map.of("role", turn.role(), "content", turn.content()));
+            }
+        }
+
+        // Aktualna wiadomość usera — z załącznikami lub bez
+        Object userContent;
+        if (request.attachments() != null && !request.attachments().isEmpty()) {
+            List<Map<String, Object>> blocks = new ArrayList<>();
+            for (AttachedFile f : request.attachments()) {
+                if (f.isImage()) {
+                    blocks.add(Map.of("type", "image", "source", Map.of(
+                            "type", "base64", "media_type", f.mediaType(), "data", f.base64Data())));
+                } else if (f.isPdf()) {
+                    blocks.add(Map.of("type", "document", "source", Map.of(
+                            "type", "base64", "media_type", "application/pdf", "data", f.base64Data())));
+                }
+                log.info("  [ATTACHMENT] {} ({})", f.fileName(), f.mediaType());
+            }
+            blocks.add(Map.of("type", "text", "text", request.userMessage()));
+            userContent = blocks;
+        } else {
+            userContent = request.userMessage();
+        }
+        messages.add(Map.of("role", "user", "content", userContent));
+        params.put("messages", messages);
 
         if (request.cacheableSystemPrompt() != null && !request.cacheableSystemPrompt().isBlank()) {
             List<Map<String, Object>> systemBlocks = new ArrayList<>();
@@ -173,12 +204,19 @@ public class AnthropicService implements AiChatService {
     }
 
     private HttpHeaders buildHeaders(boolean withCaching) {
+        return buildHeaders(withCaching, false);
+    }
+
+    private HttpHeaders buildHeaders(boolean withCaching, boolean withPdfs) {
         HttpHeaders headers = new HttpHeaders();
         headers.set("x-api-key", apiKey);
         headers.set("anthropic-version", "2023-06-01");
-        if (withCaching) {
-            headers.set("anthropic-beta", "prompt-caching-2024-07-31");
-        }
+
+        List<String> betas = new ArrayList<>();
+        if (withCaching) betas.add("prompt-caching-2024-07-31");
+        if (withPdfs)    betas.add("pdfs-2024-09-25");
+        if (!betas.isEmpty()) headers.set("anthropic-beta", String.join(",", betas));
+
         headers.setContentType(MediaType.APPLICATION_JSON);
         return headers;
     }

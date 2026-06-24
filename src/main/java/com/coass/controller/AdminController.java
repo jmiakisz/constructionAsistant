@@ -2,13 +2,19 @@ package com.coass.controller;
 
 import com.coass.entity.KnowledgeEntry;
 import com.coass.entity.UserStyleObservation;
+import com.coass.repository.DocumentChunkRepository;
+import com.coass.repository.EmbeddingUsageRepository;
 import com.coass.repository.KnowledgeEntryRepository;
 import com.coass.repository.MessageRepository;
+import com.coass.repository.UserRepository;
 import com.coass.repository.UserStyleObservationRepository;
+import com.coass.security.CoassUserDetails;
 import com.coass.service.NightlyAgentService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
@@ -26,6 +32,9 @@ public class AdminController {
     private final KnowledgeEntryRepository knowledgeEntryRepository;
     private final UserStyleObservationRepository styleObservationRepository;
     private final MessageRepository messageRepository;
+    private final UserRepository userRepository;
+    private final DocumentChunkRepository chunkRepository;
+    private final EmbeddingUsageRepository embeddingUsageRepository;
 
     // =========================================================
     // Triggery nightly agenta
@@ -125,6 +134,29 @@ public class AdminController {
     }
 
     // =========================================================
+    // Użytkownicy
+    // =========================================================
+
+    @GetMapping("/users")
+    public ResponseEntity<List<Map<String, Object>>> getUsers(@AuthenticationPrincipal CoassUserDetails principal) {
+        String role = principal.getCompanyRole();
+        if (!"ADMIN".equals(role) && !"OWNER".equals(role)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
+        return ResponseEntity.ok(userRepository.findAll().stream()
+                .map(u -> {
+                    Map<String, Object> m = new java.util.LinkedHashMap<>();
+                    m.put("id", u.getId());
+                    m.put("name", u.getName());
+                    m.put("email", u.getEmail());
+                    m.put("companyRole", u.getCompanyRole());
+                    m.put("formalityLevel", u.getFormalityLevel());
+                    return m;
+                })
+                .toList());
+    }
+
+    // =========================================================
     // Podgląd stylu użytkowników
     // =========================================================
 
@@ -158,6 +190,154 @@ public class AdminController {
                         ))
                         .toList()
         );
+    }
+
+    // =========================================================
+    // Token stats
+    // =========================================================
+
+    @GetMapping("/tokens/stats")
+    public ResponseEntity<Map<String, Object>> getTokenStats() {
+        List<Object[]> tokenStatsList = messageRepository.getTokenStats();
+        Object[] row = tokenStatsList.isEmpty() ? new Object[10] : tokenStatsList.get(0);
+
+        Map<String, Object> totals = new java.util.LinkedHashMap<>();
+        totals.put("messages",      toLong(row[0]));
+        totals.put("inputTokens",   toLong(row[1]));
+        totals.put("outputTokens",  toLong(row[2]));
+        totals.put("costUsd",       row[3]);
+
+        Map<String, Object> today = new java.util.LinkedHashMap<>();
+        today.put("inputTokens",  toLong(row[4]));
+        today.put("outputTokens", toLong(row[5]));
+        today.put("costUsd",      row[6]);
+
+        Map<String, Object> month = new java.util.LinkedHashMap<>();
+        month.put("inputTokens",  toLong(row[7]));
+        month.put("outputTokens", toLong(row[8]));
+        month.put("costUsd",      row[9]);
+
+        List<Map<String, Object>> byModel = messageRepository.getStatsByModel().stream()
+                .map(r -> {
+                    Map<String, Object> m = new java.util.LinkedHashMap<>();
+                    m.put("model",        r[0]);
+                    m.put("messages",     toLong(r[1]));
+                    m.put("inputTokens",  toLong(r[2]));
+                    m.put("outputTokens", toLong(r[3]));
+                    m.put("costUsd",      r[4]);
+                    return m;
+                }).toList();
+
+        List<Map<String, Object>> byProject = messageRepository.getStatsByProject().stream()
+                .map(r -> {
+                    Map<String, Object> m = new java.util.LinkedHashMap<>();
+                    m.put("projectId",    toLong(r[0]));
+                    m.put("projectName",  r[1]);
+                    m.put("conversations",toLong(r[2]));
+                    m.put("activeUsers",  toLong(r[3]));
+                    m.put("messages",     toLong(r[4]));
+                    m.put("inputTokens",  toLong(r[5]));
+                    m.put("outputTokens", toLong(r[6]));
+                    m.put("costUsd",      r[7]);
+                    return m;
+                }).toList();
+
+        List<Map<String, Object>> byConversation = messageRepository.getStatsByConversation().stream()
+                .map(r -> {
+                    Map<String, Object> m = new java.util.LinkedHashMap<>();
+                    m.put("conversationId",  toLong(r[0]));
+                    m.put("title",           r[1] != null ? r[1] : "Nowa rozmowa");
+                    m.put("projectName",     r[2]);
+                    m.put("userName",        r[3]);
+                    m.put("messages",        toLong(r[4]));
+                    m.put("inputTokens",     toLong(r[5]));
+                    m.put("outputTokens",    toLong(r[6]));
+                    m.put("costUsd",         r[7]);
+                    m.put("startedAt",       r[8] != null ? r[8].toString() : null);
+                    m.put("lastMessageAt",   r[9] != null ? r[9].toString() : null);
+                    return m;
+                }).toList();
+
+        List<Map<String, Object>> daily = messageRepository.getDailyStats().stream()
+                .map(r -> {
+                    Map<String, Object> m = new java.util.LinkedHashMap<>();
+                    m.put("day",          r[0].toString());
+                    m.put("inputTokens",  toLong(r[1]));
+                    m.put("outputTokens", toLong(r[2]));
+                    m.put("costUsd",      r[3]);
+                    return m;
+                }).toList();
+
+        List<Map<String, Object>> docsByProject = chunkRepository.getDocumentStatsByProject().stream()
+                .map(r -> {
+                    Map<String, Object> m = new java.util.LinkedHashMap<>();
+                    m.put("projectId",     toLong(r[0]));
+                    m.put("projectName",   r[1]);
+                    m.put("documents",     toLong(r[2]));
+                    m.put("chunks",        toLong(r[3]));
+                    m.put("indexedChunks", toLong(r[4]));
+                    return m;
+                }).toList();
+
+        List<Map<String, Object>> dailyDocs = chunkRepository.getDailyDocumentStats().stream()
+                .map(r -> {
+                    Map<String, Object> m = new java.util.LinkedHashMap<>();
+                    m.put("day",       r[0].toString());
+                    m.put("documents", toLong(r[1]));
+                    m.put("chunks",    toLong(r[2]));
+                    return m;
+                }).toList();
+
+        List<Map<String, Object>> embeddingBySource = embeddingUsageRepository.getStatsBySource().stream()
+                .map(r -> {
+                    Map<String, Object> m = new java.util.LinkedHashMap<>();
+                    m.put("source",      r[0]);
+                    m.put("calls",       toLong(r[1]));
+                    m.put("totalChars",  toLong(r[2]));
+                    m.put("todayChars",  toLong(r[3]));
+                    m.put("monthChars",  toLong(r[4]));
+                    return m;
+                }).toList();
+
+        List<Map<String, Object>> embeddingByProject = embeddingUsageRepository.getStatsByProject().stream()
+                .map(r -> {
+                    Map<String, Object> m = new java.util.LinkedHashMap<>();
+                    m.put("projectId",   toLong(r[0]));
+                    m.put("projectName", r[1]);
+                    m.put("calls",       toLong(r[2]));
+                    m.put("totalChars",  toLong(r[3]));
+                    return m;
+                }).toList();
+
+        List<Map<String, Object>> embeddingDaily = embeddingUsageRepository.getDailyStats().stream()
+                .map(r -> {
+                    Map<String, Object> m = new java.util.LinkedHashMap<>();
+                    m.put("day",        r[0].toString());
+                    m.put("calls",      toLong(r[1]));
+                    m.put("totalChars", toLong(r[2]));
+                    return m;
+                }).toList();
+
+        Map<String, Object> result = new java.util.LinkedHashMap<>();
+        result.put("totals",              totals);
+        result.put("today",               today);
+        result.put("thisMonth",           month);
+        result.put("byModel",             byModel);
+        result.put("byProject",           byProject);
+        result.put("byConversation",      byConversation);
+        result.put("daily",               daily);
+        result.put("filesByProject",      docsByProject);
+        result.put("filesDaily",          dailyDocs);
+        result.put("embeddingBySource",   embeddingBySource);
+        result.put("embeddingByProject",  embeddingByProject);
+        result.put("embeddingDaily",      embeddingDaily);
+        return ResponseEntity.ok(result);
+    }
+
+    private long toLong(Object o) {
+        if (o == null) return 0L;
+        if (o instanceof Number n) return n.longValue();
+        return Long.parseLong(o.toString());
     }
 
     // =========================================================

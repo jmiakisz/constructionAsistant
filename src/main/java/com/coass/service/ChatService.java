@@ -10,7 +10,11 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
+import java.util.Base64;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -28,6 +32,8 @@ public class ChatService {
     private final ProjectRepository projectRepository;
     private final ObjectMapper objectMapper;
     private final UserStyleObservationRepository styleObservationRepository;
+    private final DocumentRepository documentRepository;
+    private final ProjectNotificationService notificationService;
 
     @Value("${anthropic.model-chat:claude-haiku-4-5-20251001}")
     private String chatModel;
@@ -50,7 +56,8 @@ public class ChatService {
     }
 
     @Transactional
-    public String chat(Long projectId, Long userId, Long conversationId, String userMessage) {
+    public String chat(Long projectId, Long userId, Long conversationId, String userMessage,
+                       List<AttachedFile> attachments) {
         User user = userRepository.findById(userId).orElseThrow();
         Project project = projectRepository.findById(projectId).orElseThrow();
         String userRole = resolveProjectRole(user, project);
@@ -66,20 +73,26 @@ public class ChatService {
         log.info("=== CHAT REQUEST === projectId={} userId={} role={} message='{}'",
                 projectId, userId, userRole, userMessage);
 
+        // Rozwiąż referencje [Dokument: nazwa.pdf] → rzeczywiste załączniki z dysku
+        List<AttachedFile> resolvedDocs = extractDocumentRefs(userMessage, project);
+        final List<AttachedFile> uploadedAttachments = attachments; // tylko przesłane pliki, do adnotacji
+        if (!resolvedDocs.isEmpty()) {
+            List<AttachedFile> merged = new ArrayList<>(attachments);
+            merged.addAll(resolvedDocs);
+            attachments = merged;
+        }
+
         String cacheablePrompt = buildCacheablePrompt(project, user, userRole);
         String dynamicPrompt = buildDynamicPrompt(project, userRole, userMessage);
-        String historyBlock = buildHistory(conversation);
-        String fullUserMessage = historyBlock.isBlank()
-                ? userMessage
-                : historyBlock + "\n\nUSER: " + userMessage;
+        List<HistoryTurn> history = buildHistory(conversation);
 
         log.debug("CACHEABLE SYSTEM PROMPT:\n{}", cacheablePrompt);
         log.debug("DYNAMIC SYSTEM PROMPT:\n{}", dynamicPrompt);
-        log.debug("FULL USER MESSAGE (with history):\n{}", fullUserMessage);
+        log.debug("HISTORY turns={}", history.size());
 
         // #3 — Haiku odpowiada, jeśli escalate=true → Sonnet
         ChatResponse haikusResp = aiChatService.chat(
-                ChatRequest.withCache(cacheablePrompt, dynamicPrompt, fullUserMessage)
+                ChatRequest.withCache(cacheablePrompt, dynamicPrompt, userMessage, attachments, history)
                         .withModelOverride(chatModel));
         log.debug("HAIKU RAW RESPONSE:\n{}", haikusResp.text());
 
@@ -90,7 +103,7 @@ public class ChatService {
         if (parsed.escalate()) {
             log.info("=== ESCALATING TO SONNET === projectId={} userId={}", projectId, userId);
             finalResp = aiChatService.chat(
-                    ChatRequest.withCache(cacheablePrompt, dynamicPrompt, fullUserMessage)
+                    ChatRequest.withCache(cacheablePrompt, dynamicPrompt, userMessage, attachments, history)
                             .withModelOverride(escalateModel));
             parsed = parseResponse(finalResp.text());
             usedModel = escalateModel;
@@ -101,9 +114,20 @@ public class ChatService {
                 projectId, userId, usedModel, parsed.valuable(), !usedModel.equals(chatModel),
                 finalResp.inputTokens(), finalResp.outputTokens());
 
-        saveMessage(conversation, "user", userMessage, parsed.valuable(), 0, 0, null, parsed.category());
+        String savedUserMessage = userMessage;
+        if (!uploadedAttachments.isEmpty()) {
+            String fileList = uploadedAttachments.stream().map(AttachedFile::fileName).collect(Collectors.joining(", "));
+            savedUserMessage = userMessage + "\n[Załączniki: " + fileList + "]";
+        }
+        saveMessage(conversation, "user", savedUserMessage, parsed.valuable(), 0, 0, null, parsed.category());
         saveMessage(conversation, "assistant", parsed.response(), parsed.valuable(),
                 finalResp.inputTokens(), finalResp.outputTokens(), usedModel, parsed.category());
+
+        if (parsed.notifyAdmin() && parsed.adminQuestion() != null && !parsed.adminQuestion().isBlank()) {
+            notificationService.create(projectId, userId, conversationId, parsed.adminQuestion());
+            log.info("=== ADMIN NOTIFICATION === projectId={} userId={} question='{}'",
+                    projectId, userId, parsed.adminQuestion());
+        }
 
         if (parsed.styleObservation() != null) {
             saveStyleObservation(user, parsed.styleObservation());
@@ -130,13 +154,15 @@ public class ChatService {
         }
         sb.append("Odpowiadasz po polsku, konkretnie i na temat projektu.\n\n");
         sb.append("WAŻNE: Odpowiedź zwróć WYŁĄCZNIE jako JSON bez markdown:\n");
-        sb.append("{\"response\": \"twoja odpowiedź\", \"valuable\": true/false, \"escalate\": false, \"category\": null, \"style_observation\": null}\n");
+        sb.append("{\"response\": \"twoja odpowiedź\", \"valuable\": true/false, \"escalate\": false, \"category\": null, \"style_observation\": null, \"notify_admin\": false, \"admin_question\": null}\n");
         sb.append("valuable=true gdy KTÓRAKOLWIEK strona podaje konkretny fakt: cena, kwota, data, termin, nazwa firmy/podwykonawcy/materiału, decyzja, ustalenie, postęp robót (co zostało zrobione/odebrane/dostarczone), problem techniczny, ryzyko, dane z dokumentów, kto co zrobił/powie/sprawdzi.\n");
         sb.append("valuable=false TYLKO gdy: samo powitanie/pożegnanie/podziękowanie, prośba o doprecyzowanie BEZ podania faktów, odpowiedź 'rozumiem'/'ok' BEZ żadnych konkretnych informacji.\n");
         sb.append("Wątpliwość → valuable=true. Lepiej zapisać za dużo niż za mało.\n");
-        sb.append("escalate=true gdy pytanie wymaga głębokiej analizy prawnej, finansowej lub porównania wielu dokumentów — wtedy NIE odpowiadaj, zwróć TYLKO {\"response\": \"\", \"valuable\": false, \"escalate\": true, \"category\": null, \"style_observation\": null}.\n");
+        sb.append("escalate=true gdy pytanie wymaga głębokiej analizy prawnej, finansowej lub porównania wielu dokumentów — wtedy NIE odpowiadaj, zwróć TYLKO {\"response\": \"\", \"valuable\": false, \"escalate\": true, \"category\": null, \"style_observation\": null, \"notify_admin\": false, \"admin_question\": null}.\n");
         sb.append("category (gdy valuable=true): TECHNICZNA | FINANSOWA | PODWYKONAWCY | MATERIALY | null.\n");
-        sb.append("style_observation: jedno zdanie o stylu komunikacji usera w tej wiadomości (krótko/długo, formalnie/nieformalnie, szczegółowo/ogólnie). null gdy brak wystarczających danych.\n");
+        sb.append("style_observation: jedno zdanie o stylu komunikacji usera w tej wiadomości. null gdy brak danych.\n");
+        sb.append("notify_admin=true TYLKO gdy user JAWNIE prosi o przekazanie pytania/informacji do zarządzającego/admina/kierownika/managementu. Nie ustawiaj gdy user sam pyta asystenta.\n");
+        sb.append("admin_question (gdy notify_admin=true): zwięzła treść pytania/informacji do przekazania zarządzającemu, w imieniu użytkownika.\n");
 
         return sb.toString();
     }
@@ -145,7 +171,7 @@ public class ChatService {
     private String buildDynamicPrompt(Project project, String userRole, String userMessage) {
         StringBuilder sb = new StringBuilder();
         try {
-            float[] queryVec = embeddingService.embed(userMessage);
+            float[] queryVec = embeddingService.embed(userMessage, "CHAT_QUERY", project);
             String queryVecStr = embeddingService.toVectorString(queryVec);
 
             // Warstwa 2 — wiedza firmowa + projektowa dopasowana do pytania
@@ -174,21 +200,23 @@ public class ChatService {
         return sb.toString();
     }
 
-    private String buildHistory(Conversation conversation) {
+    private List<HistoryTurn> buildHistory(Conversation conversation) {
         List<Message> last = messageRepository.findLastN(conversation.getId(), HISTORY_LIMIT);
-        if (last.isEmpty() && conversation.getSummary() == null) return "";
+        List<HistoryTurn> turns = new ArrayList<>();
 
-        StringBuilder sb = new StringBuilder();
+        // Streszczenie starszych wiadomości jako pierwsza wiadomość user/assistant
         if (conversation.getSummary() != null) {
-            sb.append("PODSUMOWANIE WCZEŚNIEJSZEJ ROZMOWY:\n").append(conversation.getSummary()).append("\n\n");
+            turns.add(new HistoryTurn("user", "[Wcześniejsza rozmowa — proszę uwzględnij ten kontekst]"));
+            turns.add(new HistoryTurn("assistant", "Rozumiem. Oto podsumowanie wcześniejszej rozmowy:\n" + conversation.getSummary()));
         }
+
         if (!last.isEmpty()) {
             // findLastN zwraca DESC, odwracamy na ASC
-            sb.append(last.reversed().stream()
-                    .map(m -> m.getRole().toUpperCase() + ": " + m.getContent())
-                    .collect(Collectors.joining("\n")));
+            last.reversed().forEach(m ->
+                    turns.add(new HistoryTurn(m.getRole(), m.getContent())));
         }
-        return sb.toString();
+
+        return turns;
     }
 
     private void maybeCompact(Conversation conversation) {
@@ -233,11 +261,13 @@ public class ChatService {
                 .orElse(user.getCompanyRole());
     }
 
+    // Zwraca role których wiedzę user może zobaczyć: wszystkie <= jego poziomu
+    // KIEROWNIK widzi wiedzę od PODWYKONAWCA do KIEROWNIK, nie widzi ADMIN/OWNER
     private List<String> rolesUpTo(String roleName) {
         try {
             Role role = Role.valueOf(roleName);
             return List.of(Role.values()).stream()
-                    .filter(r -> r.isAtLeast(role) || role.isAtLeast(r))
+                    .filter(r -> role.isAtLeast(r))
                     .map(Enum::name)
                     .toList();
         } catch (Exception e) {
@@ -254,7 +284,7 @@ public class ChatService {
         return saved;
     }
 
-    private record ParsedChatResponse(String response, boolean valuable, boolean escalate, String category, String styleObservation) {}
+    private record ParsedChatResponse(String response, boolean valuable, boolean escalate, String category, String styleObservation, boolean notifyAdmin, String adminQuestion) {}
 
     private ParsedChatResponse parseResponse(String raw) {
         try {
@@ -267,12 +297,14 @@ public class ChatService {
                 boolean escalate = node.path("escalate").asBoolean(false);
                 String category = node.path("category").isNull() ? null : node.path("category").asText(null);
                 String styleObs = node.path("style_observation").isNull() ? null : node.path("style_observation").asText(null);
-                return new ParsedChatResponse(response, valuable, escalate, category, styleObs);
+                boolean notifyAdmin = node.path("notify_admin").asBoolean(false);
+                String adminQuestion = node.path("admin_question").isNull() ? null : node.path("admin_question").asText(null);
+                return new ParsedChatResponse(response, valuable, escalate, category, styleObs, notifyAdmin, adminQuestion);
             }
         } catch (Exception e) {
             log.warn("Failed to parse structured response, treating as plain text: {}", e.getMessage());
         }
-        return new ParsedChatResponse(raw, false, false, null, null);
+        return new ParsedChatResponse(raw, false, false, null, null, false, null);
     }
 
     private void saveStyleObservation(User user, String observation) {
@@ -281,6 +313,27 @@ public class ChatService {
         obs.setObservation(observation);
         styleObservationRepository.save(obs);
         log.info("DB INSERT user_style_observations userId={} observation='{}'", user.getId(), observation);
+    }
+
+    private static final Pattern DOC_REF_PATTERN = Pattern.compile("\\[Dokument: ([^\\]]+)]");
+
+    private List<AttachedFile> extractDocumentRefs(String message, Project project) {
+        List<AttachedFile> result = new ArrayList<>();
+        Matcher m = DOC_REF_PATTERN.matcher(message);
+        while (m.find()) {
+            String name = m.group(1).trim();
+            documentRepository.findByProjectIdAndName(project.getId(), name).ifPresent(doc -> {
+                try {
+                    byte[] bytes = java.nio.file.Files.readAllBytes(java.nio.file.Path.of(doc.getFilePath()));
+                    String base64 = Base64.getEncoder().encodeToString(bytes);
+                    result.add(new AttachedFile(name, "application/pdf", base64));
+                    log.info("  [DOC REF] resolved '{}' from {}", name, doc.getFilePath());
+                } catch (Exception e) {
+                    log.warn("  [DOC REF] cannot read file '{}': {}", name, e.getMessage());
+                }
+            });
+        }
+        return result;
     }
 
     private void saveMessage(Conversation conversation, String role, String content,
