@@ -20,6 +20,7 @@ public class ProjectService {
     private final ProjectRepository projectRepository;
     private final ProjectMemberRepository memberRepository;
     private final UserRepository userRepository;
+    private final RoleConfigService roleConfigService;
 
     @Transactional
     public ProjectResponse create(ProjectRequest req, Long userId) {
@@ -34,18 +35,18 @@ public class ProjectService {
         ProjectMember member = new ProjectMember();
         member.setProject(project);
         member.setUser(user);
-        member.setRole(Role.OWNER);
+        member.setRoleKey("OWNER");
         memberRepository.save(member);
 
-        return ProjectResponse.from(project, Role.OWNER);
+        return ProjectResponse.from(project, "OWNER");
     }
 
     @Transactional(readOnly = true)
     public List<ProjectResponse> listForUser(Long userId) {
         return projectRepository.findByMemberUserId(userId).stream()
                 .map(p -> {
-                    Role role = memberRepository.findRoleByProjectAndUser(p.getId(), userId).orElse(Role.PODWYKONAWCA);
-                    return ProjectResponse.from(p, role);
+                    String roleKey = memberRepository.findRoleByProjectAndUser(p.getId(), userId).orElse("PODWYKONAWCA");
+                    return ProjectResponse.from(p, roleKey);
                 })
                 .toList();
     }
@@ -54,18 +55,16 @@ public class ProjectService {
     public ProjectResponse getForUser(Long projectId, Long userId) {
         Project project = projectRepository.findById(projectId)
                 .orElseThrow(() -> new IllegalArgumentException("Project not found"));
-        Role role = memberRepository.findRoleByProjectAndUser(projectId, userId)
+        String roleKey = memberRepository.findRoleByProjectAndUser(projectId, userId)
                 .orElseThrow(() -> new AccessDeniedException("Not a member of this project"));
-        return ProjectResponse.from(project, role);
+        return ProjectResponse.from(project, roleKey);
     }
 
     @Transactional
-    public void addMember(Long projectId, Long requesterId, Long targetUserId, Role targetRole) {
-        Role requesterRole = memberRepository.findRoleByProjectAndUser(projectId, requesterId)
+    public void addMember(Long projectId, Long requesterId, Long targetUserId, String targetRoleKey) {
+        String requesterRole = memberRepository.findRoleByProjectAndUser(projectId, requesterId)
                 .orElseThrow(() -> new AccessDeniedException("Not a member"));
-        if (!requesterRole.isAtLeast(Role.ADMIN)) {
-            throw new AccessDeniedException("Only ADMIN+ can add members");
-        }
+        roleConfigService.requireAtLeast(requesterRole, "ADMIN");
 
         User target = userRepository.findById(targetUserId)
                 .orElseThrow(() -> new IllegalArgumentException("User not found"));
@@ -74,18 +73,18 @@ public class ProjectService {
         ProjectMember member = new ProjectMember();
         member.setProject(project);
         member.setUser(target);
-        member.setRole(targetRole);
+        member.setRoleKey(targetRoleKey);
         memberRepository.save(member);
     }
 
-    public Role requireMembership(Long projectId, Long userId) {
-        java.util.Optional<Role> projectRole = memberRepository.findRoleByProjectAndUser(projectId, userId);
+    public String requireMembership(Long projectId, Long userId) {
+        java.util.Optional<String> projectRole = memberRepository.findRoleByProjectAndUser(projectId, userId);
         if (projectRole.isPresent()) return projectRole.get();
 
         boolean isCompanyAdmin = userRepository.findById(userId)
                 .map(u -> "ADMIN".equals(u.getCompanyRole()) || "OWNER".equals(u.getCompanyRole()))
                 .orElse(false);
-        if (isCompanyAdmin) return Role.ADMIN;
+        if (isCompanyAdmin) return "ADMIN";
 
         throw new AccessDeniedException("Not a member of this project");
     }

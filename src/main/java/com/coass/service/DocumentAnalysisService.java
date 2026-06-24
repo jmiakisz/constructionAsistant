@@ -135,7 +135,7 @@ public class DocumentAnalysisService {
         }
     }
 
-    private String buildDocumentUserMessage(DocumentType type, String text) {
+    private String buildDocumentUserMessage(String type, String text) {
         return """
                 Przeanalizuj poniższy dokument typu %s.
 
@@ -156,7 +156,7 @@ public class DocumentAnalysisService {
 
                 DOKUMENT:
                 %s
-                """.formatted(type.name(), text);
+                """.formatted(type, text);
     }
 
     private String buildCrossAnalysisUserMessage(String extractedDataList) {

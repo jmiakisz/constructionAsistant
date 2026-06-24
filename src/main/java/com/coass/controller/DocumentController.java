@@ -2,8 +2,6 @@ package com.coass.controller;
 
 import com.coass.dto.document.DocumentResponse;
 import com.coass.entity.AiIndexingMode;
-import com.coass.entity.DocumentType;
-import com.coass.entity.Role;
 import com.coass.security.CoassUserDetails;
 import com.coass.service.DocumentService;
 import lombok.RequiredArgsConstructor;
@@ -35,9 +33,9 @@ public class DocumentController {
     public ResponseEntity<DocumentResponse> upload(
             @PathVariable Long projectId,
             @RequestParam MultipartFile file,
-            @RequestParam(defaultValue = "INNE") DocumentType documentType,
+            @RequestParam(defaultValue = "INNE") String documentType,
             @RequestParam(defaultValue = "CHUNKS_ONLY") AiIndexingMode aiIndexingMode,
-            @RequestParam(required = false) Role minRole,
+            @RequestParam(required = false) String minRole,
             @AuthenticationPrincipal CoassUserDetails user) throws IOException {
 
         return ResponseEntity.ok(
@@ -49,9 +47,9 @@ public class DocumentController {
     public ResponseEntity<List<DocumentResponse>> uploadBulk(
             @PathVariable Long projectId,
             @RequestParam List<MultipartFile> files,
-            @RequestParam(defaultValue = "INNE") DocumentType documentType,
+            @RequestParam(defaultValue = "INNE") String documentType,
             @RequestParam(defaultValue = "CHUNKS_ONLY") AiIndexingMode aiIndexingMode,
-            @RequestParam(required = false) Role minRole,
+            @RequestParam(required = false) String minRole,
             @RequestParam(required = false) Long folderId,
             @AuthenticationPrincipal CoassUserDetails user) throws IOException {
 

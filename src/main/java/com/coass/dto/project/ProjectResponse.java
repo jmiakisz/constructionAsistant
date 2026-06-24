@@ -1,7 +1,6 @@
 package com.coass.dto.project;
 
 import com.coass.entity.Project;
-import com.coass.entity.Role;
 
 import java.time.LocalDateTime;
 
@@ -10,9 +9,9 @@ public record ProjectResponse(
         String name,
         String description,
         LocalDateTime createdAt,
-        Role userRole
+        String userRole
 ) {
-    public static ProjectResponse from(Project p, Role role) {
-        return new ProjectResponse(p.getId(), p.getName(), p.getDescription(), p.getCreatedAt(), role);
+    public static ProjectResponse from(Project p, String roleKey) {
+        return new ProjectResponse(p.getId(), p.getName(), p.getDescription(), p.getCreatedAt(), roleKey);
     }
 }

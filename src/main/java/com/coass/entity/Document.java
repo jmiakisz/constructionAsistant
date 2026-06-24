@@ -33,9 +33,8 @@ public class Document {
     @Column(name = "visible_for_roles", columnDefinition = "TEXT[]")
     private String[] visibleForRoles = new String[0];
 
-    @Column(nullable = false, length = 50)
-    @Enumerated(EnumType.STRING)
-    private DocumentType documentType = DocumentType.INNE;
+    @Column(name = "document_type", nullable = false, length = 50)
+    private String documentType = "INNE";
 
     @Column(nullable = false, length = 20)
     @Enumerated(EnumType.STRING)

@@ -1,8 +1,11 @@
 package com.coass.controller;
 
 import com.coass.entity.KnowledgeEntry;
+import com.coass.entity.RoleConfig;
+import com.coass.entity.DocumentTypeConfig;
 import com.coass.entity.UserStyleObservation;
 import com.coass.repository.DocumentChunkRepository;
+import com.coass.repository.DocumentTypeConfigRepository;
 import com.coass.repository.EmbeddingUsageRepository;
 import com.coass.repository.KnowledgeEntryRepository;
 import com.coass.repository.MessageRepository;
@@ -10,6 +13,7 @@ import com.coass.repository.UserRepository;
 import com.coass.repository.UserStyleObservationRepository;
 import com.coass.security.CoassUserDetails;
 import com.coass.service.NightlyAgentService;
+import com.coass.service.RoleConfigService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
@@ -35,6 +39,8 @@ public class AdminController {
     private final UserRepository userRepository;
     private final DocumentChunkRepository chunkRepository;
     private final EmbeddingUsageRepository embeddingUsageRepository;
+    private final RoleConfigService roleConfigService;
+    private final DocumentTypeConfigRepository documentTypeConfigRepository;
 
     // =========================================================
     // Triggery nightly agenta
@@ -368,6 +374,87 @@ public class AdminController {
     }
 
     // =========================================================
+    // Role configs
+    // =========================================================
+
+    @GetMapping("/roles")
+    public ResponseEntity<List<Map<String, Object>>> getRoles() {
+        return ResponseEntity.ok(roleConfigService.getAll().stream().map(this::toRoleMap).toList());
+    }
+
+    @PostMapping("/roles")
+    public ResponseEntity<Map<String, Object>> createRole(@RequestBody Map<String, Object> body) {
+        try {
+            return ResponseEntity.ok(toRoleMap(roleConfigService.create(body)));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    @PatchMapping("/roles/{key}")
+    public ResponseEntity<Map<String, Object>> updateRole(
+            @PathVariable String key,
+            @RequestBody Map<String, Object> body) {
+        try {
+            return ResponseEntity.ok(toRoleMap(roleConfigService.update(key, body)));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
+    @DeleteMapping("/roles/{key}")
+    public ResponseEntity<Map<String, Object>> deleteRole(@PathVariable String key) {
+        try {
+            roleConfigService.delete(key);
+            return ResponseEntity.noContent().build();
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    // =========================================================
+    // Document type configs
+    // =========================================================
+
+    @GetMapping("/document-types")
+    public ResponseEntity<List<Map<String, Object>>> getDocumentTypes() {
+        return ResponseEntity.ok(documentTypeConfigRepository.findAllByOrderBySortOrderAsc()
+                .stream().map(this::toDocTypeMap).toList());
+    }
+
+    @PostMapping("/document-types")
+    public ResponseEntity<Map<String, Object>> createDocumentType(@RequestBody Map<String, Object> body) {
+        String key = ((String) body.get("key")).toUpperCase().replaceAll("[^A-Z0-9_]", "_");
+        if (documentTypeConfigRepository.existsById(key))
+            return ResponseEntity.badRequest().body(Map.of("error", "Key already exists: " + key));
+        DocumentTypeConfig dt = new DocumentTypeConfig();
+        dt.setKey(key);
+        dt.setLabel((String) body.get("label"));
+        dt.setDescription((String) body.getOrDefault("description", null));
+        dt.setSortOrder(body.get("sortOrder") instanceof Number n ? n.intValue() : 99);
+        return ResponseEntity.ok(toDocTypeMap(documentTypeConfigRepository.save(dt)));
+    }
+
+    @PatchMapping("/document-types/{key}")
+    public ResponseEntity<Map<String, Object>> updateDocumentType(
+            @PathVariable String key,
+            @RequestBody Map<String, Object> body) {
+        DocumentTypeConfig dt = documentTypeConfigRepository.findById(key).orElse(null);
+        if (dt == null) return ResponseEntity.notFound().build();
+        if (body.containsKey("label")) dt.setLabel((String) body.get("label"));
+        if (body.containsKey("description")) dt.setDescription((String) body.get("description"));
+        if (body.containsKey("sortOrder")) dt.setSortOrder(((Number) body.get("sortOrder")).intValue());
+        return ResponseEntity.ok(toDocTypeMap(documentTypeConfigRepository.save(dt)));
+    }
+
+    @DeleteMapping("/document-types/{key}")
+    public ResponseEntity<Void> deleteDocumentType(@PathVariable String key) {
+        if (!documentTypeConfigRepository.existsById(key)) return ResponseEntity.notFound().build();
+        documentTypeConfigRepository.deleteById(key);
+        return ResponseEntity.noContent().build();
+    }
+
+    // =========================================================
     // Helper
     // =========================================================
 
@@ -383,5 +470,25 @@ public class AdminController {
                 "validUntil", k.getValidUntil() != null ? k.getValidUntil().toString() : "",
                 "createdAt", k.getCreatedAt().toString()
         );
+    }
+
+    private Map<String, Object> toRoleMap(RoleConfig r) {
+        Map<String, Object> m = new java.util.LinkedHashMap<>();
+        m.put("key", r.getKey());
+        m.put("label", r.getLabel());
+        m.put("permissionLevel", r.getPermissionLevel());
+        m.put("isSystem", r.isSystem());
+        m.put("description", r.getDescription() != null ? r.getDescription() : "");
+        m.put("sortOrder", r.getSortOrder());
+        return m;
+    }
+
+    private Map<String, Object> toDocTypeMap(DocumentTypeConfig d) {
+        Map<String, Object> m = new java.util.LinkedHashMap<>();
+        m.put("key", d.getKey());
+        m.put("label", d.getLabel());
+        m.put("description", d.getDescription() != null ? d.getDescription() : "");
+        m.put("sortOrder", d.getSortOrder());
+        return m;
     }
 }

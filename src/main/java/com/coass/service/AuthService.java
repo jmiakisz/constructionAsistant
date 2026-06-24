@@ -47,13 +47,13 @@ public class AuthService {
         userRepository.save(user);
 
         String token = jwtUtil.generate(user.getId(), user.getEmail());
-        return new AuthResponse(token, user.getId(), user.getEmail(), user.getName());
+        return new AuthResponse(token, user.getId(), user.getEmail(), user.getName(), user.getCompanyRole());
     }
 
     public AuthResponse login(LoginRequest req) {
         authManager.authenticate(new UsernamePasswordAuthenticationToken(req.email(), req.password()));
         User user = userRepository.findByEmail(req.email()).orElseThrow();
         String token = jwtUtil.generate(user.getId(), user.getEmail());
-        return new AuthResponse(token, user.getId(), user.getEmail(), user.getName());
+        return new AuthResponse(token, user.getId(), user.getEmail(), user.getName(), user.getCompanyRole());
     }
 }

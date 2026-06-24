@@ -2,7 +2,6 @@ package com.coass.dto.document;
 
 import com.coass.entity.AiIndexingMode;
 import com.coass.entity.Document;
-import com.coass.entity.DocumentType;
 
 import java.time.LocalDateTime;
 import java.util.Arrays;
@@ -11,7 +10,7 @@ import java.util.List;
 public record DocumentResponse(
         Long id,
         String name,
-        DocumentType documentType,
+        String documentType,
         AiIndexingMode aiIndexingMode,
         String status,
         List<String> visibleForRoles,

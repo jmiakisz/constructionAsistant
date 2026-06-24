@@ -87,7 +87,7 @@ public class ChatController {
 
     // Wyślij wiadomość — JSON (bez plików)
     @PostMapping(value = "/{convId}/messages", consumes = MediaType.APPLICATION_JSON_VALUE)
-    public ResponseEntity<Map<String, String>> sendMessage(
+    public ResponseEntity<Map<String, Object>> sendMessage(
             @PathVariable Long projectId,
             @PathVariable Long convId,
             @RequestBody Map<String, String> body,
@@ -98,13 +98,13 @@ public class ChatController {
             return ResponseEntity.badRequest().body(Map.of("error", "message is required"));
         }
         log.info("HTTP POST /conversations/{}/messages projectId={} userId={}", convId, projectId, user.getUserId());
-        String response = chatService.chat(projectId, user.getUserId(), convId, message, List.of());
-        return ResponseEntity.ok(Map.of("response", response));
+        ChatService.ChatResult result = chatService.chat(projectId, user.getUserId(), convId, message, List.of());
+        return ResponseEntity.ok(buildResponse(result));
     }
 
     // Wyślij wiadomość — multipart (z załącznikami)
     @PostMapping(value = "/{convId}/messages", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public ResponseEntity<Map<String, String>> sendMessageWithFiles(
+    public ResponseEntity<Map<String, Object>> sendMessageWithFiles(
             @PathVariable Long projectId,
             @PathVariable Long convId,
             @RequestPart("message") String message,
@@ -136,8 +136,20 @@ public class ChatController {
 
         log.info("HTTP POST /conversations/{}/messages projectId={} userId={} attachments={}",
                 convId, projectId, user.getUserId(), attachments.size());
-        String response = chatService.chat(projectId, user.getUserId(), convId, message, attachments);
-        return ResponseEntity.ok(Map.of("response", response));
+        ChatService.ChatResult result = chatService.chat(projectId, user.getUserId(), convId, message, attachments);
+        return ResponseEntity.ok(buildResponse(result));
+    }
+
+    private Map<String, Object> buildResponse(ChatService.ChatResult result) {
+        Map<String, Object> resp = new java.util.LinkedHashMap<>();
+        resp.put("response", result.response());
+        if (result.document() != null) {
+            Map<String, String> doc = new java.util.LinkedHashMap<>();
+            doc.put("title", result.document().title());
+            doc.put("content", result.document().content());
+            resp.put("document", doc);
+        }
+        return resp;
     }
 
     private String resolveMediaType(MultipartFile file) {

@@ -34,6 +34,7 @@ public class ChatService {
     private final UserStyleObservationRepository styleObservationRepository;
     private final DocumentRepository documentRepository;
     private final ProjectNotificationService notificationService;
+    private final RoleConfigService roleConfigService;
 
     @Value("${anthropic.model-chat:claude-haiku-4-5-20251001}")
     private String chatModel;
@@ -56,8 +57,8 @@ public class ChatService {
     }
 
     @Transactional
-    public String chat(Long projectId, Long userId, Long conversationId, String userMessage,
-                       List<AttachedFile> attachments) {
+    public ChatResult chat(Long projectId, Long userId, Long conversationId, String userMessage,
+                           List<AttachedFile> attachments) {
         User user = userRepository.findById(userId).orElseThrow();
         Project project = projectRepository.findById(projectId).orElseThrow();
         String userRole = resolveProjectRole(user, project);
@@ -138,7 +139,11 @@ public class ChatService {
 
         maybeCompact(conversation);
 
-        return parsed.response();
+        if (parsed.document() != null) {
+            log.info("=== DOCUMENT GENERATED === title='{}' chars={}", parsed.document().title(), parsed.document().content().length());
+        }
+
+        return new ChatResult(parsed.response(), parsed.document());
     }
 
     // Warstwa 1 — statyczna, keszowana przez Anthropic przez 5 min
@@ -153,8 +158,14 @@ public class ChatService {
             sb.append("Dopasuj ton i formę odpowiedzi do tego stylu.\n");
         }
         sb.append("Odpowiadasz po polsku, konkretnie i na temat projektu.\n\n");
+        sb.append("DOKUMENTY:\n");
+        sb.append("Gdy użytkownik prosi o wygenerowanie dokumentu (oferta, raport, protokół, zestawienie, umowa, notatka, pismo, harmonogram, plan itp.) — wypełnij pole 'document' z tytułem i treścią w formacie Markdown.\n");
+        sb.append("W polu 'response' napisz krótkie potwierdzenie co wygenerowałeś (1-2 zdania). Użytkownik sam pobierze dokument.\n");
+        sb.append("Nie możesz wysyłać dokumentów e-mailem ani uploadować ich — generujesz tylko treść.\n");
+        sb.append("Gdy NIE generujesz dokumentu (normalna rozmowa) — 'document' musi być null.\n\n");
         sb.append("WAŻNE: Odpowiedź zwróć WYŁĄCZNIE jako JSON bez markdown:\n");
-        sb.append("{\"response\": \"twoja odpowiedź\", \"valuable\": true/false, \"escalate\": false, \"category\": null, \"style_observation\": null, \"notify_admin\": false, \"admin_question\": null}\n");
+        sb.append("{\"response\": \"twoja odpowiedź\", \"valuable\": true/false, \"escalate\": false, \"category\": null, \"style_observation\": null, \"notify_admin\": false, \"admin_question\": null, \"document\": null}\n");
+        sb.append("document: null lub {\"title\": \"Tytuł dokumentu\", \"content\": \"# Treść w Markdown...\"} gdy generujesz dokument.\n");
         sb.append("valuable=true gdy KTÓRAKOLWIEK strona podaje konkretny fakt: cena, kwota, data, termin, nazwa firmy/podwykonawcy/materiału, decyzja, ustalenie, postęp robót (co zostało zrobione/odebrane/dostarczone), problem techniczny, ryzyko, dane z dokumentów, kto co zrobił/powie/sprawdzi.\n");
         sb.append("valuable=false TYLKO gdy: samo powitanie/pożegnanie/podziękowanie, prośba o doprecyzowanie BEZ podania faktów, odpowiedź 'rozumiem'/'ok' BEZ żadnych konkretnych informacji.\n");
         sb.append("Wątpliwość → valuable=true. Lepiej zapisać za dużo niż za mało.\n");
@@ -256,23 +267,13 @@ public class ChatService {
     private String resolveProjectRole(User user, Project project) {
         return project.getMembers().stream()
                 .filter(m -> m.getUser().getId().equals(user.getId()))
-                .map(m -> m.getRole().name())
+                .map(ProjectMember::getRoleKey)
                 .findFirst()
                 .orElse(user.getCompanyRole());
     }
 
-    // Zwraca role których wiedzę user może zobaczyć: wszystkie <= jego poziomu
-    // KIEROWNIK widzi wiedzę od PODWYKONAWCA do KIEROWNIK, nie widzi ADMIN/OWNER
-    private List<String> rolesUpTo(String roleName) {
-        try {
-            Role role = Role.valueOf(roleName);
-            return List.of(Role.values()).stream()
-                    .filter(r -> role.isAtLeast(r))
-                    .map(Enum::name)
-                    .toList();
-        } catch (Exception e) {
-            return List.of(roleName);
-        }
+    private List<String> rolesUpTo(String roleKey) {
+        return roleConfigService.rolesUpTo(roleKey);
     }
 
     private Conversation createConversation(Project project, User user) {
@@ -284,7 +285,9 @@ public class ChatService {
         return saved;
     }
 
-    private record ParsedChatResponse(String response, boolean valuable, boolean escalate, String category, String styleObservation, boolean notifyAdmin, String adminQuestion) {}
+    public record DocumentAttachment(String title, String content) {}
+    public record ChatResult(String response, DocumentAttachment document) {}
+    private record ParsedChatResponse(String response, boolean valuable, boolean escalate, String category, String styleObservation, boolean notifyAdmin, String adminQuestion, DocumentAttachment document) {}
 
     private ParsedChatResponse parseResponse(String raw) {
         try {
@@ -299,12 +302,19 @@ public class ChatService {
                 String styleObs = node.path("style_observation").isNull() ? null : node.path("style_observation").asText(null);
                 boolean notifyAdmin = node.path("notify_admin").asBoolean(false);
                 String adminQuestion = node.path("admin_question").isNull() ? null : node.path("admin_question").asText(null);
-                return new ParsedChatResponse(response, valuable, escalate, category, styleObs, notifyAdmin, adminQuestion);
+                DocumentAttachment document = null;
+                JsonNode docNode = node.path("document");
+                if (!docNode.isMissingNode() && !docNode.isNull() && docNode.isObject()) {
+                    String title = docNode.path("title").asText(null);
+                    String content = docNode.path("content").asText(null);
+                    if (title != null && content != null) document = new DocumentAttachment(title, content);
+                }
+                return new ParsedChatResponse(response, valuable, escalate, category, styleObs, notifyAdmin, adminQuestion, document);
             }
         } catch (Exception e) {
             log.warn("Failed to parse structured response, treating as plain text: {}", e.getMessage());
         }
-        return new ParsedChatResponse(raw, false, false, null, null, false, null);
+        return new ParsedChatResponse(raw, false, false, null, null, false, null, null);
     }
 
     private void saveStyleObservation(User user, String observation) {

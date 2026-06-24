@@ -2,12 +2,12 @@ package com.coass.controller;
 
 import com.coass.entity.Document;
 import com.coass.entity.DocumentFolder;
-import com.coass.entity.Role;
 import com.coass.repository.DocumentFolderRepository;
 import com.coass.repository.DocumentRepository;
 import com.coass.repository.ProjectRepository;
 import com.coass.security.CoassUserDetails;
 import com.coass.service.ProjectService;
+import com.coass.service.RoleConfigService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -26,28 +26,27 @@ public class DocumentFolderController {
     private final DocumentRepository documentRepository;
     private final ProjectRepository projectRepository;
     private final ProjectService projectService;
+    private final RoleConfigService roleConfigService;
 
     @GetMapping
     public ResponseEntity<List<Map<String, Object>>> list(
             @PathVariable Long projectId,
             @AuthenticationPrincipal CoassUserDetails user) {
 
-        Role userRole = projectService.requireMembership(projectId, user.getUserId());
+        String userRoleKey = projectService.requireMembership(projectId, user.getUserId());
         List<DocumentFolder> allFolders = folderRepository.findByProjectId(projectId);
 
-        // INZYNIER+ sees all folders (including empty ones they manage)
-        if (userRole.isAtLeast(Role.INZYNIER)) {
+        if (roleConfigService.isAtLeast(userRoleKey, "INZYNIER")) {
             return ResponseEntity.ok(allFolders.stream().map(this::toMap).toList());
         }
 
-        // Lower roles: only folders containing at least one accessible document (+ ancestors)
         Map<Long, Long> parentOf = allFolders.stream()
                 .filter(f -> f.getParent() != null)
                 .collect(Collectors.toMap(DocumentFolder::getId, f -> f.getParent().getId()));
 
         Set<Long> visibleIds = new HashSet<>();
         documentRepository.findByProjectId(projectId).stream()
-                .filter(d -> canSee(d, userRole) && d.getFolder() != null)
+                .filter(d -> canSee(d, userRoleKey) && d.getFolder() != null)
                 .forEach(d -> {
                     Long fId = d.getFolder().getId();
                     while (fId != null && visibleIds.add(fId)) {
@@ -151,17 +150,16 @@ public class DocumentFolderController {
         return ResponseEntity.noContent().build();
     }
 
-    // ── helpers ──────────────────────────────────────────────────────────────
-
-    private boolean canSee(Document doc, Role userRole) {
+    private boolean canSee(Document doc, String userRoleKey) {
         String[] roles = doc.getVisibleForRoles();
         if (roles == null || roles.length == 0) return true;
-        // Find the lowest-level role in the visible set using enum declaration order (ascending level)
-        Set<Role> roleSet = Arrays.stream(roles).map(Role::valueOf).collect(Collectors.toSet());
-        for (Role r : Role.values()) {
-            if (roleSet.contains(r)) return userRole.isAtLeast(r);
+        int userLevel = roleConfigService.getLevel(userRoleKey);
+        int minLevel = Integer.MAX_VALUE;
+        for (String rk : roles) {
+            int lvl = roleConfigService.getLevel(rk);
+            if (lvl < minLevel) minLevel = lvl;
         }
-        return true;
+        return userLevel >= minLevel;
     }
 
     private Map<String, Object> toMap(DocumentFolder f) {

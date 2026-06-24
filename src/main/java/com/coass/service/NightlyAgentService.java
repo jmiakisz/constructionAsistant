@@ -1,7 +1,6 @@
 package com.coass.service;
 
 import com.coass.entity.*;
-import com.coass.entity.Role;
 import com.coass.repository.*;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -253,7 +252,6 @@ public class NightlyAgentService {
                     Long userId = m.getConversation().getUser().getId();
                     return projectMemberRepository
                             .findRoleByProjectAndUser(project.getId(), userId)
-                            .map(Role::name)
                             .orElse("MEMBER");
                 })
                 .findFirst().orElse("MEMBER");

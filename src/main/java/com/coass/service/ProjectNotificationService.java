@@ -1,7 +1,6 @@
 package com.coass.service;
 
 import com.coass.entity.ProjectNotification;
-import com.coass.entity.Role;
 import com.coass.repository.ProjectNotificationRepository;
 import com.coass.repository.ProjectRepository;
 import com.coass.repository.UserRepository;
@@ -23,6 +22,7 @@ public class ProjectNotificationService {
     private final ProjectRepository projectRepository;
     private final UserRepository userRepository;
     private final ProjectService projectService;
+    private final RoleConfigService roleConfigService;
 
     @Transactional
     public void create(Long projectId, Long senderUserId, Long conversationId, String question) {
@@ -51,8 +51,8 @@ public class ProjectNotificationService {
 
     @Transactional(readOnly = true)
     public List<Map<String, Object>> listForProject(Long projectId, Long userId) {
-        Role role = projectService.requireMembership(projectId, userId);
-        List<ProjectNotification> list = role.isAtLeast(Role.KIEROWNIK)
+        String roleKey = projectService.requireMembership(projectId, userId);
+        List<ProjectNotification> list = roleConfigService.isAtLeast(roleKey, "KIEROWNIK")
                 ? notificationRepository.findAllForProject(projectId)
                 : notificationRepository.findForUser(projectId, userId);
         return list.stream().map(this::toMap).toList();

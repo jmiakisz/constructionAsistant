@@ -2,7 +2,6 @@ package com.coass.service;
 
 import com.coass.entity.KnowledgeEntry;
 import com.coass.entity.ProjectBriefing;
-import com.coass.entity.Role;
 import com.coass.repository.KnowledgeEntryRepository;
 import com.coass.repository.ProjectBriefingRepository;
 import com.coass.repository.ProjectRepository;
@@ -13,7 +12,6 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
@@ -27,6 +25,7 @@ public class BriefingService {
     private final ProjectRepository projectRepository;
     private final KnowledgeEntryRepository knowledgeEntryRepository;
     private final ProjectBriefingRepository briefingRepository;
+    private final RoleConfigService roleConfigService;
 
     @Value("${anthropic.model-chat:claude-haiku-4-5-20251001}")
     private String chatModel;
@@ -35,38 +34,37 @@ public class BriefingService {
 
     @Transactional
     public Map<String, Object> getBriefing(Long projectId, Long userId, boolean forceRefresh) {
-        Role role = projectService.requireMembership(projectId, userId);
-        String roleName = role.name();
+        String roleKey = projectService.requireMembership(projectId, userId);
 
         if (!forceRefresh) {
-            var cached = briefingRepository.findByProjectIdAndRoleName(projectId, roleName)
+            var cached = briefingRepository.findByProjectIdAndRoleName(projectId, roleKey)
                     .filter(b -> b.getGeneratedAt().isAfter(LocalDateTime.now().minusHours(CACHE_HOURS)));
             if (cached.isPresent()) {
                 ProjectBriefing b = cached.get();
-                log.debug("Briefing cache hit projectId={} role={}", projectId, roleName);
+                log.debug("Briefing cache hit projectId={} role={}", projectId, roleKey);
                 return Map.of("content", b.getContent(), "generatedAt", b.getGeneratedAt().toString(), "cached", true);
             }
         }
 
-        String content = generate(projectId, role);
+        String content = generate(projectId, roleKey);
 
-        ProjectBriefing briefing = briefingRepository.findByProjectIdAndRoleName(projectId, roleName)
+        ProjectBriefing briefing = briefingRepository.findByProjectIdAndRoleName(projectId, roleKey)
                 .orElse(new ProjectBriefing());
         briefing.setProjectId(projectId);
-        briefing.setRoleName(roleName);
+        briefing.setRoleName(roleKey);
         briefing.setContent(content);
         briefing.setGeneratedAt(LocalDateTime.now());
         briefingRepository.save(briefing);
 
-        log.info("Briefing generated projectId={} role={} chars={}", projectId, roleName, content.length());
+        log.info("Briefing generated projectId={} role={} chars={}", projectId, roleKey, content.length());
         return Map.of("content", content, "generatedAt", briefing.getGeneratedAt().toString(), "cached", false);
     }
 
-    private String generate(Long projectId, Role role) {
+    private String generate(Long projectId, String roleKey) {
         String projectName = projectRepository.findById(projectId)
                 .map(p -> p.getName()).orElse("projekt");
 
-        List<String> visibleRoles = rolesUpTo(role);
+        List<String> visibleRoles = roleConfigService.rolesUpTo(roleKey);
         List<KnowledgeEntry> entries = knowledgeEntryRepository.findRecentForBriefing(projectId, visibleRoles);
 
         if (entries.isEmpty()) {
@@ -78,6 +76,11 @@ public class BriefingService {
             ctx.append("- [").append(e.getCategory() != null ? e.getCategory() : "OGÓLNE").append("] ")
                .append(e.getContent()).append("\n");
         }
+
+        String roleLabel = roleConfigService.getAll().stream()
+                .filter(r -> r.getKey().equals(roleKey))
+                .map(com.coass.entity.RoleConfig::getLabel)
+                .findFirst().orElse(roleKey);
 
         String systemPrompt = "Jesteś asystentem budowlanym. Odpowiadasz wyłącznie po polsku. Bądź konkretny i zwięzły.";
         String userPrompt = String.format("""
@@ -92,17 +95,10 @@ public class BriefingService {
                 Napisz zwięzłe podsumowanie (3–5 zdań) aktualnej sytuacji na projekcie z perspektywy roli %s.
                 Zacznij od razu od treści — bez wstępu ani nagłówka.
                 """,
-                projectName, role.name(), role.name(), ctx, role.name());
+                projectName, roleLabel, roleLabel, ctx, roleLabel);
 
         ChatResponse resp = aiChatService.chat(
                 ChatRequest.of(systemPrompt, userPrompt).withModelOverride(chatModel));
         return resp.text().strip();
-    }
-
-    private List<String> rolesUpTo(Role role) {
-        return Arrays.stream(Role.values())
-                .filter(r -> role.isAtLeast(r))
-                .map(Enum::name)
-                .toList();
     }
 }

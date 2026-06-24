@@ -3,7 +3,6 @@ package com.coass.controller;
 import com.coass.dto.project.ProjectRequest;
 import com.coass.dto.project.ProjectResponse;
 import com.coass.entity.ProjectAlert;
-import com.coass.entity.Role;
 import com.coass.repository.ProjectAlertRepository;
 import com.coass.security.CoassUserDetails;
 import com.coass.service.BriefingService;
@@ -75,7 +74,7 @@ public class ProjectController {
     public ResponseEntity<Void> addMember(
             @PathVariable Long id,
             @RequestParam Long userId,
-            @RequestParam Role role,
+            @RequestParam String role,
             @AuthenticationPrincipal CoassUserDetails user) {
         projectService.addMember(id, user.getUserId(), userId, role);
         return ResponseEntity.ok().build();
