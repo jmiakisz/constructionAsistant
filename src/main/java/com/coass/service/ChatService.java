@@ -74,17 +74,20 @@ public class ChatService {
         log.info("=== CHAT REQUEST === projectId={} userId={} role={} message='{}'",
                 projectId, userId, userRole, userMessage);
 
-        // Rozwiąż referencje [Dokument: nazwa.pdf] → rzeczywiste załączniki z dysku
-        List<AttachedFile> resolvedDocs = extractDocumentRefs(userMessage, project);
+        // Rozwiąż referencje [Dokument: nazwa.pdf] → extractedData jako tekst lub surowy plik
+        DocRefsResult docRefs = extractDocumentRefs(userMessage, project);
         final List<AttachedFile> uploadedAttachments = attachments; // tylko przesłane pliki, do adnotacji
-        if (!resolvedDocs.isEmpty()) {
+        if (!docRefs.files().isEmpty()) {
             List<AttachedFile> merged = new ArrayList<>(attachments);
-            merged.addAll(resolvedDocs);
+            merged.addAll(docRefs.files());
             attachments = merged;
         }
 
         String cacheablePrompt = buildCacheablePrompt(project, user, userRole);
         String dynamicPrompt = buildDynamicPrompt(project, userRole, userMessage);
+        if (!docRefs.textContext().isBlank()) {
+            dynamicPrompt = docRefs.textContext() + dynamicPrompt;
+        }
         List<HistoryTurn> history = buildHistory(conversation);
 
         log.debug("CACHEABLE SYSTEM PROMPT:\n{}", cacheablePrompt);
@@ -327,23 +330,32 @@ public class ChatService {
 
     private static final Pattern DOC_REF_PATTERN = Pattern.compile("\\[Dokument: ([^\\]]+)]");
 
-    private List<AttachedFile> extractDocumentRefs(String message, Project project) {
-        List<AttachedFile> result = new ArrayList<>();
+    private record DocRefsResult(List<AttachedFile> files, String textContext) {}
+
+    private DocRefsResult extractDocumentRefs(String message, Project project) {
+        List<AttachedFile> files = new ArrayList<>();
+        StringBuilder text = new StringBuilder();
         Matcher m = DOC_REF_PATTERN.matcher(message);
         while (m.find()) {
             String name = m.group(1).trim();
             documentRepository.findFirstByProjectIdAndName(project.getId(), name).ifPresent(doc -> {
-                try {
-                    byte[] bytes = java.nio.file.Files.readAllBytes(java.nio.file.Path.of(doc.getFilePath()));
-                    String base64 = Base64.getEncoder().encodeToString(bytes);
-                    result.add(new AttachedFile(name, "application/pdf", base64));
-                    log.info("  [DOC REF] resolved '{}' from {}", name, doc.getFilePath());
-                } catch (Exception e) {
-                    log.warn("  [DOC REF] cannot read file '{}': {}", name, e.getMessage());
+                if (doc.getExtractedData() != null && !doc.getExtractedData().isBlank()) {
+                    text.append("=== ANALIZA DOKUMENTU: ").append(name).append(" ===\n")
+                        .append(doc.getExtractedData()).append("\n\n");
+                    log.info("  [DOC REF] injecting extractedData for '{}'", name);
+                } else {
+                    try {
+                        byte[] bytes = java.nio.file.Files.readAllBytes(java.nio.file.Path.of(doc.getFilePath()));
+                        String base64 = Base64.getEncoder().encodeToString(bytes);
+                        files.add(new AttachedFile(name, "application/pdf", base64));
+                        log.info("  [DOC REF] resolved raw file '{}' from {}", name, doc.getFilePath());
+                    } catch (Exception e) {
+                        log.warn("  [DOC REF] cannot read file '{}': {}", name, e.getMessage());
+                    }
                 }
             });
         }
-        return result;
+        return new DocRefsResult(files, text.toString());
     }
 
     private void saveMessage(Conversation conversation, String role, String content,
