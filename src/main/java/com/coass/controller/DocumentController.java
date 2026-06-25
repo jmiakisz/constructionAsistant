@@ -36,28 +36,6 @@ public class DocumentController {
 
     // ── Alerts ──────────────────────────────────────────────────────────────────
 
-    @GetMapping("/alerts")
-    public ResponseEntity<List<Map<String, Object>>> getAlerts(
-            @PathVariable Long projectId,
-            @AuthenticationPrincipal CoassUserDetails user) {
-
-        projectService.requireMembership(projectId, user.getUserId());
-        List<Map<String, Object>> result = alertRepository
-                .findByProjectIdOrderByCreatedAtDesc(projectId)
-                .stream()
-                .map(a -> {
-                    java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();
-                    m.put("id", a.getId());
-                    m.put("level", a.getLevel());
-                    m.put("message", a.getMessage());
-                    m.put("documentId", a.getDocument() != null ? a.getDocument().getId() : null);
-                    m.put("createdAt", a.getCreatedAt().toString());
-                    return m;
-                })
-                .toList();
-        return ResponseEntity.ok(result);
-    }
-
     @GetMapping("/documents/{documentId}/alerts")
     public ResponseEntity<List<Map<String, Object>>> getDocumentAlerts(
             @PathVariable Long projectId,
