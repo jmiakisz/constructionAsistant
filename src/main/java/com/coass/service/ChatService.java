@@ -332,7 +332,7 @@ public class ChatService {
         Matcher m = DOC_REF_PATTERN.matcher(message);
         while (m.find()) {
             String name = m.group(1).trim();
-            documentRepository.findByProjectIdAndName(project.getId(), name).ifPresent(doc -> {
+            documentRepository.findFirstByProjectIdAndName(project.getId(), name).ifPresent(doc -> {
                 try {
                     byte[] bytes = java.nio.file.Files.readAllBytes(java.nio.file.Path.of(doc.getFilePath()));
                     String base64 = Base64.getEncoder().encodeToString(bytes);

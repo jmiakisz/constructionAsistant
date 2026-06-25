@@ -68,8 +68,7 @@ public class ProjectService {
     public ProjectResponse getForUser(Long projectId, Long userId) {
         Project project = projectRepository.findById(projectId)
                 .orElseThrow(() -> new IllegalArgumentException("Project not found"));
-        String roleKey = memberRepository.findRoleByProjectAndUser(projectId, userId)
-                .orElseThrow(() -> new AccessDeniedException("Not a member of this project"));
+        String roleKey = requireMembership(projectId, userId);
         return ProjectResponse.from(project, roleKey);
     }
 

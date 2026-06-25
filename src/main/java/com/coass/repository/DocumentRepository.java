@@ -23,7 +23,7 @@ public interface DocumentRepository extends JpaRepository<Document, Long> {
 
     long countByProjectIdAndAiIndexingModeAndStatus(Long projectId, AiIndexingMode aiIndexingMode, String status);
 
-    java.util.Optional<Document> findByProjectIdAndName(Long projectId, String name);
+    java.util.Optional<Document> findFirstByProjectIdAndName(Long projectId, String name);
 
     long countByFolderId(Long folderId);
 

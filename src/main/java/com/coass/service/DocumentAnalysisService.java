@@ -90,7 +90,9 @@ public class DocumentAnalysisService {
 
     // #2 — Haiku do cross analizy (porównuje małe JSONy, nie potrzebuje Sonnet)
     private void runCrossAnalysis(Long projectId, Document triggerDoc) {
-        List<Document> docs = documentRepository.findByProjectIdWithExtractedData(projectId);
+        List<Document> docs = documentRepository.findByProjectIdWithExtractedData(projectId).stream()
+                .filter(d -> triggerDoc.getDocumentType().equals(d.getDocumentType()))
+                .toList();
         if (docs.size() < 2) return;
 
         try {
