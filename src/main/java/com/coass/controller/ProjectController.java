@@ -51,13 +51,15 @@ public class ProjectController {
         List<Map<String, Object>> result = alertRepository
                 .findByProjectIdOrderByCreatedAtDesc(id)
                 .stream()
-                .map(a -> Map.<String, Object>of(
-                        "id", a.getId(),
-                        "level", a.getLevel(),
-                        "message", a.getMessage(),
-                        "createdAt", a.getCreatedAt(),
-                        "documentId", a.getDocument() != null ? a.getDocument().getId() : null
-                ))
+                .map(a -> {
+                    java.util.Map<String, Object> m = new java.util.LinkedHashMap<>();
+                    m.put("id", a.getId());
+                    m.put("level", a.getLevel());
+                    m.put("message", a.getMessage());
+                    m.put("createdAt", a.getCreatedAt().toString());
+                    m.put("documentId", a.getDocument() != null ? a.getDocument().getId() : null);
+                    return m;
+                })
                 .toList();
         return ResponseEntity.ok(result);
     }
