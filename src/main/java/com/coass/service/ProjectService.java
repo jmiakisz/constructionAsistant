@@ -43,6 +43,19 @@ public class ProjectService {
 
     @Transactional(readOnly = true)
     public List<ProjectResponse> listForUser(Long userId) {
+        User user = userRepository.findById(userId).orElseThrow();
+        boolean isCompanyAdmin = "ADMIN".equals(user.getCompanyRole()) || "OWNER".equals(user.getCompanyRole());
+
+        if (isCompanyAdmin) {
+            return projectRepository.findAll().stream()
+                    .map(p -> {
+                        String roleKey = memberRepository.findRoleByProjectAndUser(p.getId(), userId)
+                                .orElse("ADMIN");
+                        return ProjectResponse.from(p, roleKey);
+                    })
+                    .toList();
+        }
+
         return projectRepository.findByMemberUserId(userId).stream()
                 .map(p -> {
                     String roleKey = memberRepository.findRoleByProjectAndUser(p.getId(), userId).orElse("PODWYKONAWCA");

@@ -149,6 +149,19 @@ public class DocumentService {
         documentRepository.save(doc);
     }
 
+    @Transactional
+    public DocumentResponse reprocess(Long documentId, Long userId) {
+        Document doc = documentRepository.findById(documentId)
+                .orElseThrow(() -> new IllegalArgumentException("Document not found"));
+        projectService.requireMembership(doc.getProject().getId(), userId);
+        chunkRepository.deleteByDocumentId(documentId);
+        doc.setStatus(DocumentStatus.PROCESSING.name());
+        doc.setExtractedData(null);
+        documentRepository.save(doc);
+        processingService.process(documentId, Paths.get(doc.getFilePath()));
+        return DocumentResponse.from(doc);
+    }
+
     public record FileResult(Path path, String originalName) {}
 
     @Transactional(readOnly = true)

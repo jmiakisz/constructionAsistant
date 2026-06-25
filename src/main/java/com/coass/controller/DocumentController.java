@@ -173,6 +173,14 @@ public class DocumentController {
         return ResponseEntity.noContent().build();
     }
 
+    @PostMapping("/documents/{documentId}/reprocess")
+    public ResponseEntity<DocumentResponse> reprocess(
+            @PathVariable Long projectId,
+            @PathVariable Long documentId,
+            @AuthenticationPrincipal CoassUserDetails user) {
+        return ResponseEntity.ok(documentService.reprocess(documentId, user.getUserId()));
+    }
+
     @PostMapping("/documents/{documentId}/archive")
     public ResponseEntity<Void> archive(
             @PathVariable Long projectId,

@@ -120,7 +120,7 @@ public class DocumentAnalysisService {
                 for (JsonNode alert : alerts) {
                     ProjectAlert pa = new ProjectAlert();
                     pa.setProject(triggerDoc.getProject());
-                    pa.setDocument(triggerDoc);
+                    pa.setDocument(null); // cross-analysis alerts are project-level
                     pa.setLevel(alert.path("level").asText("INFO"));
                     pa.setMessage(alert.path("message").asText());
                     ProjectAlert saved = alertRepository.save(pa);
