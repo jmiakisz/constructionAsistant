@@ -26,4 +26,6 @@ public interface DocumentRepository extends JpaRepository<Document, Long> {
     java.util.Optional<Document> findByProjectIdAndName(Long projectId, String name);
 
     long countByFolderId(Long folderId);
+
+    List<Document> findByStatusOrderByCreatedAtDesc(String status);
 }

@@ -157,9 +157,19 @@ public class DocumentService {
         chunkRepository.deleteByDocumentId(documentId);
         doc.setStatus(DocumentStatus.PROCESSING.name());
         doc.setExtractedData(null);
+        doc.setAiIndexingMode(AiIndexingMode.FULL);
         documentRepository.save(doc);
         processingService.process(documentId, Paths.get(doc.getFilePath()));
         return DocumentResponse.from(doc);
+    }
+
+    @Transactional
+    public void adminDeleteDocument(Long documentId) {
+        Document doc = documentRepository.findById(documentId)
+                .orElseThrow(() -> new IllegalArgumentException("Document not found"));
+        chunkRepository.deleteByDocumentId(documentId);
+        try { Files.deleteIfExists(Paths.get(doc.getFilePath())); } catch (Exception ignored) {}
+        documentRepository.delete(doc);
     }
 
     public record FileResult(Path path, String originalName) {}

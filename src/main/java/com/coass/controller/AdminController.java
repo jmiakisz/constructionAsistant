@@ -5,6 +5,7 @@ import com.coass.entity.RoleConfig;
 import com.coass.entity.DocumentTypeConfig;
 import com.coass.entity.UserStyleObservation;
 import com.coass.repository.DocumentChunkRepository;
+import com.coass.repository.DocumentRepository;
 import com.coass.repository.DocumentTypeConfigRepository;
 import com.coass.repository.EmbeddingUsageRepository;
 import com.coass.repository.KnowledgeEntryRepository;
@@ -12,6 +13,7 @@ import com.coass.repository.MessageRepository;
 import com.coass.repository.UserRepository;
 import com.coass.repository.UserStyleObservationRepository;
 import com.coass.security.CoassUserDetails;
+import com.coass.service.DocumentService;
 import com.coass.service.NightlyAgentService;
 import com.coass.service.RoleConfigService;
 import lombok.RequiredArgsConstructor;
@@ -41,6 +43,34 @@ public class AdminController {
     private final EmbeddingUsageRepository embeddingUsageRepository;
     private final RoleConfigService roleConfigService;
     private final DocumentTypeConfigRepository documentTypeConfigRepository;
+    private final DocumentRepository documentRepository;
+    private final DocumentService documentService;
+
+    // =========================================================
+    // Zarchiwizowane dokumenty
+    // =========================================================
+
+    @GetMapping("/archived-documents")
+    public ResponseEntity<List<Map<String, Object>>> getArchivedDocuments() {
+        return ResponseEntity.ok(documentRepository.findByStatusOrderByCreatedAtDesc("ARCHIVED").stream()
+                .map(d -> {
+                    Map<String, Object> m = new java.util.LinkedHashMap<>();
+                    m.put("id", d.getId());
+                    m.put("name", d.getName());
+                    m.put("documentType", d.getDocumentType());
+                    m.put("projectId", d.getProject().getId());
+                    m.put("projectName", d.getProject().getName());
+                    m.put("createdAt", d.getCreatedAt().toString());
+                    return m;
+                })
+                .toList());
+    }
+
+    @DeleteMapping("/archived-documents/{id}")
+    public ResponseEntity<Void> deleteArchivedDocument(@PathVariable Long id) {
+        documentService.adminDeleteDocument(id);
+        return ResponseEntity.noContent().build();
+    }
 
     // =========================================================
     // Triggery nightly agenta
